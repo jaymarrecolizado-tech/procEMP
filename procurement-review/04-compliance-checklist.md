@@ -99,6 +99,11 @@
 | ☐ | Low per-field confidence and unreadable scans route to a human; an OCR failure can never produce a FAIL verdict | Abstention test results + sample verdicts | BAC / ML |
 | ☐ | Every verdict records both `extraction_model_version` and `rules_engine_version`, plus an adapter-computed `prompt_hash` | Sample verdict JSON | Engineering |
 | ☐ | Model server outage produces `EXTRACTION_FAILED` and **no verdict** | Failure-injection test result | Engineering |
+| ☐ | **GL** Every indexed chunk carries `regime`, `effective_from/to`, `supersedes`, `source_url`, `passage_hash` and `verified`; unverified chunks can never be cited | `seed_corpus.json` / corpus table export + test A21/A22 | Legal / ML |
+| ☐ | **GL** Explicit section citations resolve only to that exact section — no fuzzy substitution; failure forces `ABSTAIN` + `CITATION_MISMATCH` | Test A23 + sample verdict | ML |
+| ☐ | Corpus passage integrity is hash-verifiable by COA without trusting the application | `verify_corpus_integrity()` report + test A24 | IT / COA |
+| ☐ | New corpus snapshots require a named human approver; existing transactions stay pinned | `CORPUS_SNAPSHOT_ACTIVATED` events + test A25 | Legal / ML |
+| ☐ | Official source PDFs retained alongside normalized local copies; the PDF remains the authoritative legal text and hashes cover only the local copy | Source archive + source_note in corpus seed | BAC Sec |
 
 ## G. Local → VPS migration
 
@@ -106,7 +111,7 @@
 |---|---|---|---|
 | ☐ | Identical container images on both sites; no hardcoded paths or host-specific secrets | Compose/helm files + config diff | IT |
 | ☐ | Migration procedure: export → verify chain → import → re-verify → dual-read → cutover; ledger never rebuilt | Runbook + `MIGRATION_VERIFIED` event | IT |
-| ☐ | Full acceptance suite (A1–A20, 45 tests) re-run on the VPS with results archived | Test report | Engineering |
+| ☐ | Full acceptance suite (A1–A25, 58 tests) re-run on the VPS with results archived | Test report | Engineering |
 | ☐ | Cutover downtime window, rollback trigger and data-owner sign-off recorded | Cutover record | HOPE / IT |
 | ☐ | No external AI/embedding API enabled post-migration | Egress rules + config review | IT |
 

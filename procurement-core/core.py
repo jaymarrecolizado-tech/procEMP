@@ -22,6 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCHEMA_PATH = os.path.join(HERE, "schema.sql")
 SEED_PATH = os.path.join(HERE, "seed_rules.json")
 SEED_FORMS_PATH = os.path.join(HERE, "seed_forms.json")
+SEED_CORPUS_PATH = os.path.join(HERE, "seed_corpus.json")
 
 STAGES = [
     "DRAFT", "PLANNING", "BIDDING_DOCS", "ADVERTISEMENT", "RECEIVING",
@@ -91,6 +92,7 @@ def init_db(path: str = ":memory:", seed: bool = True) -> sqlite3.Connection:
     if seed:
         load_seed(conn)
         load_forms(conn)
+        load_corpus(conn)
     return conn
 
 
@@ -145,6 +147,33 @@ def load_forms(conn: sqlite3.Connection, path: str = SEED_FORMS_PATH) -> None:
              int(form.get("body_available", False)), int(form.get("verified", False)),
              data["source"], form.get("note")),
         )
+
+
+def load_corpus(conn: sqlite3.Connection, path: str = SEED_CORPUS_PATH) -> None:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    for chunk in data["chunks"]:
+        if not chunk.get("source_url"):
+            raise CoreError(f"chunk {chunk['chunk_id']} has no source_url")
+        conn.execute(
+            "INSERT OR REPLACE INTO corpus_chunk "
+            "(chunk_id, corpus_snapshot_id, law, issuance_no, section, regime, "
+            " effective_from, effective_to, supersedes, source_url, text, "
+            " passage_hash, verified) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (chunk["chunk_id"], chunk.get("corpus_snapshot_id", data["corpus_snapshot_id"]),
+             chunk["law"],
+             chunk["issuance_no"], chunk["section"], chunk["regime"],
+             chunk["effective_from"], chunk["effective_to"], chunk["supersedes"],
+             chunk["source_url"], chunk["text"], sha256_text(chunk["text"]),
+             int(chunk.get("verified", False))),
+        )
+    active = [c["chunk_id"] for c in data["chunks"] if c.get("verified")]
+    checksum = sha256_text(canonical(sorted(active)))
+    conn.execute(
+        "UPDATE corpus_snapshot SET checksum=?, approved_by=? WHERE id=?",
+        (checksum, "SEED_VERIFIED_OFFICIAL_TEXTS_REQUIRE_NAMED_HUMAN_REAPPROVAL",
+         data["corpus_snapshot_id"]),
+    )
 
 
 # ---------------------------------------------------------------- ledger
@@ -597,7 +626,7 @@ def migrate(source_conn, target_path, actor_id="it-admin") -> dict:
         data = json.load(fh)
     target.execute("INSERT INTO transition_policy (id,status,note) VALUES (1,?,?)",
                    (data["transition_policy"]["status"], data["transition_policy"]["note"]))
-    for table in ("ruleset", "rule", "corpus_snapshot", "form_registry", "proc_tx",
+    for table in ("ruleset", "rule", "corpus_snapshot", "corpus_chunk", "form_registry", "proc_tx",
                   "stage_gate", "signoff", "number_sequence", "issued_number",
                   "document", "verdict", "draft"):
         cols = [r[1] for r in source_conn.execute(f"PRAGMA table_info({table})").fetchall()]

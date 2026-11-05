@@ -349,6 +349,11 @@ can_transition(tx, from, to):
 | A18 | Per-field confidence below threshold | Field omitted; checker abstains on that field; document not listed as missing |
 | A19 | Configure an external (non-loopback) model endpoint | Refused at construction; no network call made |
 | A20 | Model server unavailable | `EXTRACTION_FAILED` event and **no verdict**; verdict records adapter-computed `prompt_hash` and both model/engine versions on success |
+| A21 | Retrieve a rule that is not yet in force / already expired on the posting date | Chunk excluded from candidates (`as_of` filtering) |
+| A22 | Mark a chunk as superseded by a newer issuance | Old chunk excluded; only the newer chunk retrievable |
+| A23 | Cite an explicit section that does not exist in the pinned corpus | `verified=false` + `CITATION_MISMATCH`; **no fuzzy fallback**; downstream verdict forced to `ABSTAIN` |
+| A24 | Alter a corpus passage after indexing | `verify()` and `verify_corpus_integrity()` both detect the hash change |
+| A25 | Build and activate a new GPPB corpus snapshot | Requires a named human approver; existing transactions keep their pinned snapshot; new transactions use the new one |
 
 ---
 
@@ -364,4 +369,7 @@ can_transition(tx, from, to):
 | Model returns malformed / hallucinated JSON | Strict schema validation fails → `ABSTAIN` verdict, human queue |
 | OCR unreadable / low-confidence field | `ABSTAIN`, never a FAIL that could disqualify a bidder |
 | Non-loopback model URL configured | Refused by the adapter before any network call |
+| Cited section missing from pinned corpus | `CITATION_MISMATCH` event; verdict forced to `ABSTAIN` — never a fuzzy substitution |
+| Corpus passage altered after indexing | Hash verification fails; corpus marked untrusted until a human re-approves |
+| New GPPB issuance published | New snapshot built but inactive until a named human approves; in-flight transactions unaffected |
 | Clock drift | Server time from a single NTP-synced source; `occurred_at` and `signed_at` validated against it |

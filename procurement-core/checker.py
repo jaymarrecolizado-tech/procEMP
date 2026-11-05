@@ -36,7 +36,7 @@ def _field(doc, name):
 
 
 def evaluate_submission(conn, tx_id, checklist, extracted, actor_id="rules-engine",
-                        evidence_map=None, extraction_meta=None):
+                        evidence_map=None, extraction_meta=None, citation_resolver=None):
     """checklist: BAC-approved per-transaction required-document list.
        extracted: structured fields from the OCR/extraction pipeline.
        evidence_map: optional {field: {page, bbox, snippet}} from OCR.
@@ -58,8 +58,15 @@ def evaluate_submission(conn, tx_id, checklist, extracted, actor_id="rules-engin
     for item in checklist["documents"]:
         key = item["key"]
         ref = item.get("section_ref", "BAC-approved checklist / Instructions to Bidders")
-        citations.append({"section": ref, "verified": True,
-                          "source": "BAC_APPROVED_CHECKLIST"})
+        if citation_resolver:
+            citation = citation_resolver(ref, tx_id)
+            citations.append(citation or {
+                "section": ref, "verified": False,
+                "reason": "citation resolver returned no passage",
+            })
+        else:
+            citations.append({"section": ref, "verified": True,
+                              "source": "BAC_APPROVED_CHECKLIST"})
         if key not in documents:
             missing.append(key)
             notes.append(f"{key}: not submitted")

@@ -5,7 +5,7 @@
 **Supersedes:** `ai-assisted-procurement-workflow.md` (RA 9184 / 2016 IRR baseline)
 **Target deployment:** DICT Regional Office II · local workstation first, then agency VPS
 **Legal sources verified:** IRR of RA 12009 (GPPB, Feb 2025), GPPB Resolution No. 03-2025 (14 May 2025), 2016 Revised IRR of RA 9184 (legacy, via GPPB/COA references)
-**Build status (2026-11-05):** steps 1–6 implemented in `procurement-core/` (stdlib-only prototype, 45 passing tests). Steps 7–10 pending. No model weights are bundled; the Qwen2.5-3B fine-tune plugs in behind `extraction.LocalHTTPBackend`.
+**Build status (2026-11-06):** steps 1–7 implemented in `procurement-core/` (stdlib-only prototype, 58 passing tests). Steps 8–10 pending. No model weights or embedding models are bundled; the Qwen2.5-3B fine-tune plugs in behind `extraction.LocalHTTPBackend`.
 
 > **Read this first.** The previous design is structurally sound but legally stale. RA 12009 took effect 13 August 2024; Section 115 of its IRR **repeals RA 9184 and Commonwealth Act No. 138**. Section 113 keeps RA 9184 in force before the IRR's effectivity and grants a **three-year transitory period from GPPB approval of the Standard Forms** (GPPB Res. 03-2025, 14 May 2025 → approximately May 2028). GPPB Res. 03-2025 also states that a subsequent issuance will clarify which law applies during the transition. Until that guidance is obtained, this design supports **both regimes** rather than guessing.
 
@@ -161,6 +161,12 @@ Also add to the timeline tracker: protest and request-for-reconsideration deadli
 
 **Change management:** a monitored ingestion job for new GPPB issuances; new corpus version requires human approval before activation; active transactions keep their pinned snapshot.
 
+**Implemented in `procurement-core/rag.py` + `seed_corpus.json` (step 7):**
+- 13 verbatim passages from the official IRR of RA 12009 and GPPB Res. 03-2025, chunked by section with `regime`, `effective_from/to`, `supersedes`, `source_url`, `passage_hash` and `verified` metadata. One clearly-labelled legacy placeholder chunk is `verified=false` and can never be cited. Passage hashes cover the **local normalized copy**, not the official PDF — the PDF remains authoritative.
+- `AsOfRAG.retrieve()` filters by the transaction's **pinned** snapshot, regime and effective dates; excludes superseded chunks; BM25 + exact section-number boost, with an optional pluggable dense backend (no embedding model bundled — `StubEmbedding` is wiring-only).
+- **An explicit section citation must resolve to that exact section.** Fuzzy fallback is refused when a section number is present, so `Sec. 999.9` can never be "verified" by a similar-looking rule. An unverifiable citation yields `verified=false` → the checker's verdict is forced to `ABSTAIN` + a `CITATION_MISMATCH` event.
+- `verify()` re-checks snapshot pinning, regime, effective dates, supersession and passage hash; `verify_corpus_integrity()` recomputes all hashes for COA. `build_snapshot()` / `activate_snapshot()` require a named human approver, and existing transactions keep their pinned snapshot.
+
 ---
 
 ## 6. Model strategy
@@ -218,8 +224,8 @@ Registries required: model version table (training snapshot, eval scores per sli
 | 4 | **Deterministic checker + rules engine** | Done | Core verdict engine; advisory, evidence-backed, abstaining |
 | 5 | **Form registry + template library / field-fill drafting** | Done | Legal text must be deterministic; official bodies hash-registered by a human |
 | 6 | **OCR / extraction adapter (Qwen2.5-3B plug-in)** | Done | Model is a field extractor only; strict schema validation and loopback-only inference keep it inside the compliance boundary |
-| 7 | **As-of RAG + citation verification** | Next | Adds traceability; needs corpus versioning from 1 |
-| 8 | **Audit folder compiler** | Partial | `export_folder()` exists in the prototype; production COA packaging and WORM sealing remain |
+| 7 | **As-of RAG + citation verification** | Done | Adds traceability; seeded with verified official passages, pinned per transaction, exact-section citation check |
+| 8 | **Audit folder compiler / COA packaging** | Next | `export_folder()` exists in the prototype; production COA packaging, WORM sealing and the COA verification endpoint remain |
 | 9 | **Monitoring dashboards** | Pending | Stage 8 / project tracker integration |
 | 10 | **Correction logging + retraining pipeline** | Pending | Last — needs real production corrections to be meaningful |
 

@@ -98,18 +98,25 @@ def main():
           "(routed to human, never a disqualification)")
 
     from extraction import StubBackend, extract_and_check, valid_stub_response
+    from rag import AsOfRAG, verify_corpus_integrity
+    rag = AsOfRAG(conn)
     pages = [{"page": 1, "text": "PhilGEPS Platinum, valid until 2027-06-30"},
              {"page": 2, "text": "Financial proposal: PHP 950,000.00"}]
     ev, er = extract_and_check(conn, tx, checklist, pages,
-                               StubBackend(valid_stub_response()))
-    print("8. Extraction adapter (Qwen plug-in point):", ev["decision"],
+                               StubBackend(valid_stub_response()), rag=rag)
+    print("8. Extraction + as-of RAG:", ev["decision"],
           "| model:", ev["model_version"])
     print("   OCR evidence spans:", sum(1 for s in ev["evidence_spans"] if "page" in s),
-          "| schema violations:", len(er.violations))
+          "| verified rule citations:",
+          sum(1 for c in ev["rule_citations"] if c.get("verified")),
+          "/", len(ev["rule_citations"]))
+    print("   corpus integrity:", verify_corpus_integrity(conn)["ok"])
     noisy = valid_stub_response()
     noisy["documents"]["financial_proposal"]["fields"]["amount"] = "950000"
-    ev2, _ = extract_and_check(conn, tx, checklist, pages, StubBackend(noisy))
+    ev2, _ = extract_and_check(conn, tx, checklist, pages, StubBackend(noisy), rag=rag)
     print("   model returns wrong type ->", ev2["decision"], "(abstain, not disqualify)")
+    hit = rag.retrieve("confidentiality of submitted bids", tx, top_k=1)[0]
+    print("   Q&A retrieval -> Sec.", hit["section"], "|", hit["law"])
 
     from forms import render_draft, list_forms
     noa = {

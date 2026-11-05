@@ -283,7 +283,7 @@ def _abstain_verdict(conn, tx_id, reasons, result, actor_id):
 
 
 def extract_and_check(conn, tx_id, checklist, pages, backend, schema=None,
-                      ocr=None, threshold=None, actor_id="extraction-adapter"):
+                      ocr=None, threshold=None, actor_id="extraction-adapter", rag=None):
     """Full step-6 pipeline: gate -> OCR -> extract -> validate -> check."""
     if not has_event(conn, tx_id, "BID_OPENING_RECORDED"):
         append_event(conn, tx_id, "POLICY_BLOCKED", actor_id, "EXTRACTION_ADAPTER", {
@@ -328,7 +328,14 @@ def extract_and_check(conn, tx_id, checklist, pages, backend, schema=None,
     verdict = evaluate_submission(
         conn, tx_id, checklist, extracted,
         evidence_map=result.evidence_map, extraction_meta=meta,
+        citation_resolver=rag.resolve_citation if rag else None,
     )
+    if rag:
+        append_event(conn, tx_id, "RAG_CITATIONS_RESOLVED", actor_id, "RAG", {
+            "citation_count": len(verdict["rule_citations"]),
+            "verified_count": sum(1 for c in verdict["rule_citations"] if c.get("verified")),
+            "corpus_snapshot_id": get_tx(conn, tx_id)["corpus_snapshot_id"],
+        })
     return verdict, result
 
 

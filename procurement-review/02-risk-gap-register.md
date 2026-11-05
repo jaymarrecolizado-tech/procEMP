@@ -9,7 +9,7 @@
 
 **Summary:** 3 × P0 · 14 × P1 · 10 × P2 = **27 findings**. Nine items are go-live blockers (marked **GL**).
 
-**Build status (2026-11-05):** steps 1–6 of the revised build order are implemented in `procurement-core/` with 45 passing tests (A1–A20 plus checker, forms and extraction suites). Findings R-01…R-19 have code-level controls in the prototype; they still require the human/legal sign-offs listed in the compliance checklist before any real transaction is processed.
+**Build status (2026-11-06):** steps 1–7 of the revised build order are implemented in `procurement-core/` with 58 passing tests (A1–A25 plus checker, forms, extraction and RAG suites). Findings R-01…R-19 have code-level controls in the prototype; they still require the human/legal sign-offs listed in the compliance checklist before any real transaction is processed. R-17 (as-of RAG) now has a working implementation with 13 verified official passages; remaining work is ingesting the full GPPB/COA corpus and replacing the legacy placeholder.
 
 ---
 

@@ -21,6 +21,7 @@ from extraction import (
     StubBackend, LocalHTTPBackend, PassthroughOCR, ExtractionError,
     extract_and_check, validate_output, load_schema, valid_stub_response,
 )
+from rag import AsOfRAG, StubEmbedding, verify_corpus_integrity
 from core import (
     CoreError, GateBlocked, PolicyBlocked, RuleResolutionError, UnverifiedRuleError,
     canonical, init_db, suggest_regime, resolve_rules, get_rule,
@@ -572,6 +573,145 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(self.conn.execute(
             "SELECT count(*) c FROM ledger_event WHERE tx_id=? AND event_type='SCHEMA_VALIDATION_FAILED'",
             (self.tx,)).fetchone()["c"], 1)
+
+
+class RAGTests(unittest.TestCase):
+
+    def setUp(self):
+        self.conn = init_db(":memory:")
+        self.rag = AsOfRAG(self.conn)
+        self.r = resolve_rules(self.conn, "2026-11-05", "RA12009_IRR")
+        self.tx = new_tx(self.conn)
+        self.checklist = sample_checklist(self.r["ruleset_version"])
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _insert_chunk(self, chunk_id, **overrides):
+        base = dict(
+            chunk_id=chunk_id, corpus_snapshot_id="corpus-ra12009-2025-02",
+            law="IRR of RA 12009", issuance_no="IRR of RA 12009",
+            section="34.1", regime="RA12009_IRR", effective_from="2025-02-01",
+            effective_to=None, supersedes=None,
+            source_url="https://www.gppb.gov.ph",
+            text="Small Value Procurement threshold two million pesos and three price quotations.",
+            passage_hash="", verified=1,
+        )
+        base.update(overrides)
+        base["passage_hash"] = sha256_text(base["text"])
+        cols = ",".join(base)
+        self.conn.execute(
+            f"INSERT OR REPLACE INTO corpus_chunk ({cols}) VALUES ({','.join('?' for _ in base)})",
+            tuple(base.values()),
+        )
+
+    def test_retrieval_finds_the_right_section(self):
+        hits = self.rag.retrieve("Sec. 59.1 checklist of required documents pass or fail",
+                                 self.tx, top_k=3)
+        self.assertTrue(hits)
+        self.assertEqual(hits[0]["section"], "59.1")
+
+    def test_as_of_filters_future_and_expired_rules(self):
+        self._insert_chunk("FUTURE-RULE", effective_from="2030-01-01")
+        self._insert_chunk("EXPIRED-RULE", effective_to="2020-01-01")
+        ids = {r["chunk_id"] for r in self.rag._candidates(self.tx)}
+        self.assertNotIn("FUTURE-RULE", ids)
+        self.assertNotIn("EXPIRED-RULE", ids)
+        self.assertIn("RA12009-IRR-S59-1", ids)
+
+    def test_superseded_chunk_is_excluded(self):
+        self._insert_chunk("NEW-THRESHOLD", section="34.1",
+                           supersedes="RA12009-IRR-S34-1",
+                           effective_from="2026-01-01")
+        ids = {r["chunk_id"] for r in self.rag._candidates(self.tx)}
+        self.assertNotIn("RA12009-IRR-S34-1", ids)
+        self.assertIn("NEW-THRESHOLD", ids)
+
+    def test_citation_resolves_to_a_verified_passage(self):
+        citation = self.rag.resolve_citation(
+            "IRR RA 12009 Sec. 59.1 / ITB checklist", self.tx)
+        self.assertTrue(citation["verified"])
+        self.assertEqual(citation["chunk_id"], "RA12009-IRR-S59-1")
+        self.assertEqual(self.rag.verify(citation, self.tx), (True, "verified"))
+
+    def test_unknown_section_cannot_produce_a_verified_citation(self):
+        citation = self.rag.resolve_citation("IRR RA 12009 Sec. 999.9", self.tx)
+        self.assertFalse(citation["verified"])
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM ledger_event WHERE tx_id=? AND event_type='CITATION_MISMATCH'",
+            (self.tx,)).fetchone()["c"], 1)
+
+    def test_legacy_regime_has_no_citable_verified_corpus(self):
+        legacy_tx = new_tx(self.conn, regime="RA9184_2016IRR",
+                           posting_date="2023-06-01")
+        citation = self.rag.resolve_citation("2016 IRR Annex H Sec. 53.9", legacy_tx)
+        self.assertFalse(citation["verified"])
+
+    def test_tampered_passage_is_detected(self):
+        citation = self.rag.resolve_citation("IRR RA 12009 Sec. 58.5", self.tx)
+        self.conn.execute("UPDATE corpus_chunk SET text=? WHERE chunk_id=?",
+                          ("tampered", citation["chunk_id"]))
+        ok, reason = self.rag.verify(citation, self.tx)
+        self.assertFalse(ok)
+        self.assertIn("altered", reason)
+
+    def test_corpus_integrity_check(self):
+        self.assertTrue(verify_corpus_integrity(self.conn)["ok"])
+        self.conn.execute("UPDATE corpus_chunk SET text='tampered' WHERE chunk_id='RA12009-IRR-S34-1'")
+        report = verify_corpus_integrity(self.conn)
+        self.assertFalse(report["ok"])
+        self.assertIn("RA12009-IRR-S34-1", report["altered_chunks"])
+
+    def test_full_pipeline_with_rag_cites_every_rule(self):
+        open_bids(self.conn, self.tx)
+        verdict, _ = extract_and_check(
+            self.conn, self.tx, self.checklist, PAGES,
+            StubBackend(valid_stub_response()), rag=self.rag)
+        self.assertEqual(verdict["decision"], "PASS")
+        self.assertTrue(all(c.get("verified") for c in verdict["rule_citations"]))
+        self.assertTrue(all(c.get("chunk_id") for c in verdict["rule_citations"]))
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM ledger_event WHERE tx_id=? AND event_type='RAG_CITATIONS_RESOLVED'",
+            (self.tx,)).fetchone()["c"], 1)
+
+    def test_unverifiable_citation_forces_abstain(self):
+        open_bids(self.conn, self.tx)
+        bad_checklist = dict(self.checklist)
+        bad_checklist["documents"] = [
+            {**d, "section_ref": "IRR RA 12009 Sec. 999.9"}
+            for d in self.checklist["documents"]
+        ]
+        verdict, _ = extract_and_check(
+            self.conn, self.tx, bad_checklist, PAGES,
+            StubBackend(valid_stub_response()), rag=self.rag)
+        self.assertEqual(verdict["decision"], "ABSTAIN")
+
+    def test_snapshot_activation_requires_a_human(self):
+        with self.assertRaises(CoreError):
+            self.rag.activate_snapshot("corpus-ra12009-2025-02", "")
+        self.rag.activate_snapshot("corpus-ra12009-2025-02", "legal-officer-01")
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM ledger_event WHERE event_type='CORPUS_SNAPSHOT_ACTIVATED'"
+        ).fetchone()["c"], 1)
+
+    def test_new_corpus_does_not_repin_existing_transaction(self):
+        pinned_before = get_tx(self.conn, self.tx)["corpus_snapshot_id"]
+        self.rag.build_snapshot("corpus-2027", "RA12009_IRR@2027-01", "RA12009_IRR", [{
+            "chunk_id": "NEW-2027", "law": "IRR of RA 12009", "issuance_no": "GPPB 2027",
+            "section": "34.1", "effective_from": "2027-01-01",
+            "source_url": "https://www.gppb.gov.ph",
+            "text": "Revised SVP threshold issued by the GPPB.", "verified": True,
+        }], approver="legal-officer-01")
+        self.rag.activate_snapshot("corpus-2027", "legal-officer-01")
+        self.assertEqual(get_tx(self.conn, self.tx)["corpus_snapshot_id"], pinned_before)
+        new_tx_2027 = new_tx(self.conn, posting_date="2027-06-01")
+        self.assertEqual(get_tx(self.conn, new_tx_2027)["corpus_snapshot_id"], "corpus-2027")
+
+    def test_dense_backend_wiring(self):
+        rag = AsOfRAG(self.conn, StubEmbedding())
+        hits = rag.retrieve("confidentiality of submitted bids", self.tx, top_k=2)
+        self.assertTrue(hits)
+        self.assertEqual(hits[0]["section"], "58.5")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,62 @@
+{
+  "source_note": "Verbatim excerpts from the official IRR of RA 12009 (GPPB, Feb 2025) and GPPB Resolution No. 03-2025 (14 May 2025), extracted from the official PDFs. OCR spacing and quotation marks were normalized; passage_hash is a hash of the LOCAL NORMALIZED COPY only, not of the official PDF. The official PDF remains the authoritative legal text. Chunks with verified=false are placeholders and can never be cited.",
+  "corpus_snapshot_id": "corpus-ra12009-2025-02",
+  "chunks": [
+    {
+      "chunk_id": "RA12009-IRR-S7-8", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "7.8", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "No government procurement shall be conducted unless it conforms to the approved Indicative or Final APP of the Procuring Entity, as applicable."
+    },
+    {
+      "chunk_id": "RA12009-IRR-S26-1", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "26.1", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "The Procuring Entity shall adopt any of the following modes of procurement consistent with the Fit-for-Purpose procurement approach: a) Competitive Bidding; b) Limited Source Bidding; c) Competitive Dialogue; d) Unsolicited Offer with Bid Matching; e) Direct Contracting; f) Direct Acquisition; g) Repeat Order; h) Small Value Procurement; i) Negotiated Procurement; j) Direct Sales; and k) Direct Procurement for Science, Technology and Innovation."
+    },
+    {
+      "chunk_id": "RA12009-IRR-S34-1", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "34.1", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "Small Value Procurement (SVP) is a mode of procurement whereby the Procuring Entity requests for the submission of at least three (3) price quotations for Goods not available in the PS-DBM, Infrastructure Projects, and Consulting Services. The receipt of one (1) quotation is sufficient to proceed with the evaluation of bidders: Provided, That, the amount involved does not exceed Two Million Pesos (PHP 2,000,000.00), subject to the periodic review of the threshold amount and adjustments as may be deemed appropriate by the GPPB."
+    },
+    {
+      "chunk_id": "RA12009-IRR-S34-3", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "34.3", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "Except for those with ABCs equal to Two Hundred Thousand Pesos (PHP 200,000.00) and below which shall not require posting, RFQ or Request for Proposal (RFP) shall be posted for a period of three (3) calendar days on the PhilGEPS website, website of the Procuring Entity, if available, and at any conspicuous place reserved for this purpose in the premises of the Procuring Entity. The BAC shall prepare and send the RFQs or RFPs to at least three (3) suppliers, contractors or consultants of known qualifications. Receipt of at least one (1) quotation is sufficient to proceed with the evaluation thereof."
+    },
+    {
+      "chunk_id": "RA12009-IRR-S50-3-1", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "50.3.1", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "For Competitive bidding, Competitive Dialogue, and Unsolicited Offer with Bid Matching, the Invitation to Bid or Request for Expression of Interest shall be posted at any conspicuous place reserved for this purpose in the premises of the Procuring Entity concerned for seven (7) calendar days as certified by the head of the BAC Secretariat of the Procuring Entity concerned; and posted continuously in the PhilGEPS website, the website of the Procuring Entity concerned, if available, for seven (7) calendar days starting on the date of advertisement."
+    },
+    {
+      "chunk_id": "RA12009-IRR-S58-1", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "58.1", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "The BAC shall open the bids immediately after the deadline for the submission and receipt of bids. The time, date, and place of the opening of bids shall be specified in the Bidding Documents."
+    },
+    {
+      "chunk_id": "RA12009-IRR-S58-2", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "58.2", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "For LCRB, the BAC shall open the technical and financial proposals on the same day; and for MEARB or MARB, only the technical proposals shall be opened while the financial proposals shall remain unopened and be secured by the BAC until the specified time of their opening as indicated in the Bidding Documents."
+    },
+    {
+      "chunk_id": "RA12009-IRR-S58-5", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "58.5", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "The bidders or their duly authorized representatives may attend the opening of bids. The BAC shall ensure the integrity, security, and confidentiality of all submitted bids. The abstract of bids as read, and the minutes of the bid opening shall be made available to the public upon written request and payment of a specified fee to recover the cost of materials."
+    },
+    {
+      "chunk_id": "RA12009-IRR-S59-1", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "59.1", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "Prior to bid evaluation, the BAC shall open the first bid envelopes in public to determine each bidder's compliance with the documents required to be submitted for the eligibility and technical requirements, as prescribed in this IRR. For this purpose, the BAC shall check the submitted documents of each bidder against a checklist of required documents to ascertain if they are all present, using a non-discretionary pass or fail criterion, as stated in the Instructions to Bidders. If a bidder submitted the required document, it shall be rated passed for that particular requirement. In this regard, bids that fail to include any requirement or are incomplete, or patently insufficient shall be considered as failed. Otherwise, the BAC shall rate the first bid envelope as passed."
+    },
+    {
+      "chunk_id": "RA12009-IRR-S113-1", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "113.1", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "Prior to the effectivity of this IRR, the provisions of RA No. 9184 and its IRR shall remain in force and effect in order to ensure the continued implementation of programs, activities, and projects."
+    },
+    {
+      "chunk_id": "RA12009-IRR-S115", "law": "IRR of RA 12009", "issuance_no": "IRR of RA 12009 (GPPB, Feb 2025)", "section": "115", "regime": "RA12009_IRR", "effective_from": "2025-02-01", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/02/IRR-of-RA-No.-12009.pdf", "verified": true,
+      "text": "RA No. 9184, otherwise known as the Government Procurement Reform Act and Commonwealth Act No. 138, are hereby repealed. All other laws, acts, presidential decrees, executive orders, presidential proclamations, issuances, rules and regulations, or parts thereof which are contrary to or inconsistent with any of the provisions of the Act and this IRR are hereby repealed, amended, or modified accordingly."
+    },
+    {
+      "chunk_id": "GPPB-03-2025-STANDARD", "law": "GPPB Resolution No. 03-2025", "issuance_no": "GPPB Resolution No. 03-2025, dated 14 May 2025", "section": "definition", "regime": "RA12009_IRR", "effective_from": "2025-05-14", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/07/GPPB-Resolution-No.-03-2025.pdf", "verified": true,
+      "text": "Standard Forms are prescribed forms that incorporate the provisions of RA No. 12009 and its IRR, and upon issuance of the GPPB, the use of which shall be mandatory for all Procuring Entities. These shall include the Strategic Planning Forms, Philippine Bidding Documents, and Philippine Bidding Documents Related Forms."
+    },
+    {
+      "chunk_id": "GPPB-03-2025-RECOMMENDED", "law": "GPPB Resolution No. 03-2025", "issuance_no": "GPPB Resolution No. 03-2025, dated 14 May 2025", "section": "definition", "regime": "RA12009_IRR", "effective_from": "2025-05-14", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph/wp-content/uploads/2025/07/GPPB-Resolution-No.-03-2025.pdf", "verified": true,
+      "text": "Recommended Forms are templates issued by the GPPB to guide the Procuring Entities. While these are not classified as Standard Forms, they serve as references to promote consistency and good practice in procurement. These include the other forms which will be presented, together with their corresponding guidelines, to the members of the GPPB for further review and approval at a later date."
+    },
+    {
+      "chunk_id": "LEGACY-ANNEX-H-PLACEHOLDER", "corpus_snapshot_id": "corpus-ra9184-2016", "law": "2016 Revised IRR of RA 9184", "issuance_no": "2016 Revised IRR + Annex H (NOT VERIFIED)", "section": "Annex H", "regime": "RA9184_2016IRR", "effective_from": "2016-10-28", "effective_to": null, "supersedes": null, "source_url": "https://www.gppb.gov.ph", "verified": false,
+      "text": "LEGACY THRESHOLDS NOT VERIFIED. Populate from the official 2016 Revised IRR Annex H and its GPPB amendments before use. This chunk can never be cited: verified=false."
+    }
+  ]
+}

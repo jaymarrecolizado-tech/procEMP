@@ -36,6 +36,22 @@ CREATE TABLE IF NOT EXISTS corpus_snapshot (
   is_active   INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS corpus_chunk (
+  chunk_id            TEXT PRIMARY KEY,
+  corpus_snapshot_id  TEXT NOT NULL REFERENCES corpus_snapshot(id),
+  law                 TEXT NOT NULL,
+  issuance_no         TEXT NOT NULL,
+  section             TEXT NOT NULL,
+  regime              TEXT NOT NULL,
+  effective_from      TEXT NOT NULL,
+  effective_to        TEXT,
+  supersedes          TEXT,
+  source_url          TEXT NOT NULL,
+  text                TEXT NOT NULL,
+  passage_hash        TEXT NOT NULL,
+  verified            INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS transition_policy (
   id     INTEGER PRIMARY KEY CHECK (id = 1),
   status TEXT NOT NULL,
