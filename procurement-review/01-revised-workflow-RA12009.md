@@ -34,11 +34,22 @@
 | Award criteria | LCRB / lowest calculated responsive quotation (also HRRB for consulting) | **LCRB, MEARB, MARB, HRRB** (Sec. 34.3(g), Sec. 58.2) |
 | Posting | Varies by mode and ABC | Sec. 50.3.1: 7 calendar days (competitive bidding, competitive dialogue, unsolicited offer); Sec. 50.3.2: 3 calendar days (SVP above ₱200k, limited source, two failed biddings, NGO participation) |
 | Bid opening | Public opening; pass/fail eligibility check | Sec. 58.1 public opening; Sec. 58.2(b) financial proposals stay sealed for MEARB/MARB; Sec. 58.3 e-bid passwords disclosed only at opening; Sec. 58.5 BAC ensures integrity/security/confidentiality; Sec. 59.1 pass/fail check **after** public opening |
-| Forms | 2016-era Philippine Bidding Documents and agency templates | **GPPB Res. 03-2025 Standard Forms**, effective 90 days after publication (targeted end-June 2025) |
+| Forms | 2016-era Philippine Bidding Documents and agency templates | **GPPB Res. 03-2025 forms**, effective 90 days after publication (targeted end-June 2025); see §1.2 for the mandatory vs recommended distinction |
 
 > **Open item (owner: BAC Secretariat / legal):** obtain the GPPB issuance promised in Res. 03-2025 on the applicability of RA 9184 vs RA 12009 during the transitory period. Confirm exact legacy SVP/Shopping thresholds from 2016 IRR Annex H and its GPPB amendments. Do not hardcode either value until confirmed.
 
-### 1.2 Regime resolution rule
+### 1.2 Form classification — do not call every form a "Standard Form"
+
+GPPB Res. 03-2025 draws an explicit line that the earlier version of this design glossed over:
+
+- **Standard Forms (mandatory use):** Strategic Planning Forms (APP, PPMP, Mandatory Market Scoping Form), the Philippine Bidding Documents for Goods / Infrastructure / Consulting, and PBD Related Forms (Contract Form, Omnibus Sworn Statement, Bid Securing Declaration, Performance Securing Declaration, Bid Form, Price Schedule, Technical Proposal Forms, Financial Proposal Forms). Res. 03-2025 states that "upon issuance of the GPPB, the use of which shall be mandatory for all PEs".
+- **Recommended Forms ("other forms", explicitly *not* classified as Standard Forms):** Request for Quotation / Request for Expression of Interest, Abstract of Bids, **Notice of Award**, Supplemental Bid Bulletin, Notice of Post Qualification with Additional Requirements, Procurement Monitoring Report, Observer's Report, and the rest of the 22-form list. These are templates to guide PEs, not prescribed mandatory forms.
+
+Consequences for the build: the form registry must carry `classification` per form; RFQ, Abstract of Bids and NOA are drafted from the *Recommended* set. Do not describe them as mandatory Standard Forms in the compliance checklist or in BAC documentation. The prototype implements this in `procurement-core/seed_forms.json` (36 forms, 14 Standard / 22 Recommended).
+
+**Additional open item:** Res. 03-2025's common revision (a) allows Standard Forms to be accomplished "either manually or through online platforms, **as may be authorized by the GPPB**". Confirm that a system-generated form counts as an accomplished form for DICT RO2 before treating any generated document as official. Until then, generated output is a labelled structural draft that cannot be released.
+
+### 1.3 Regime resolution rule
 
 ```
 regime = resolve_rules(
@@ -84,7 +95,7 @@ Registry   Ledger       Checker      (templates)    Knowledge     Service
 | Numbering service | Atomic PR#/RFQ#/Resolution#/PO#/Contract# per type per unit per year; void-with-reason | Reuse or silently skip numbers |
 | Document checker | OCR → field extraction → classification; confidence + evidence spans | Decide compliance |
 | Rules engine | Deterministic pass/fail over extracted fields against the applicable ruleset | Depend on LLM output for arithmetic or presence checks |
-| Drafting assistant | Fill Standard Form templates with approved data; cite source of each field | Invent clauses, pre-sign, or finalize |
+| Drafting assistant | Fill registered GPPB form templates with approved data; cite source of each field | Invent clauses, pre-sign, or finalize |
 | As-of RAG | Retrieve the rule text in force on the transaction date; return section + passage + version | Return "latest" by default |
 | Audit compiler | Read-only materialized folder per transaction | Be the system of record |
 
@@ -95,7 +106,7 @@ Registry   Ledger       Checker      (templates)    Knowledge     Service
 | Stage | AI role | Human authority | Hard gate |
 |---|---|---|---|
 | 0 Planning | Consolidate PPMP into Indicative APP; flag budget/line-item mismatches; **suggest modes using Fit-for-Purpose + thresholds**, not thresholds alone | BAC recommends final APP; HOPE approves (Sec. 7). Posting of approved APP | Yes |
-| 1 Bidding docs | Draft from **GPPB Res. 03-2025 Standard Forms**; anti-tailor-fitting scan; generate required-document checklist bound to `ruleset_version` | BAC + TWG approve | Yes |
+| 1 Bidding docs | Draft from the applicable **GPPB Res. 03-2025 forms** (Standard / Recommended per §1.2); anti-tailor-fitting scan; generate required-document checklist bound to `ruleset_version` | BAC + TWG approve | Yes |
 | 2 Advertisement | Generate posting package, compute deadlines, log proof of posting (7 calendar days, Sec. 50.3.1) | BAC Secretariat signs content; **automate countdown only** | Yes for content |
 | 3 Receipt / custody | **Outer-envelope logging only**: bidder, timestamp, envelope count, seal condition, late/early flag. No OCR, no content read, no password storage | BAC Secretariat custody | Yes |
 | 4 Public opening | Pre-fill Abstract of Bids from data entered **during** the opening; flag discrepancies live | BAC opens and reads bids; signed Abstract (Sec. 58) | Yes — **unlocks content ingestion** |
@@ -121,7 +132,7 @@ Registry   Ledger       Checker      (templates)    Knowledge     Service
 | Step | Current rule (RA 12009 IRR) | AI role | Human gate |
 |---|---|---|---|
 | PR | Item must be in approved APP; ABC determines route | Draft PR from free text; validate against APP; flag if ABC exceeds SVP threshold or mode is misclassified | End-user, Budget Officer, HOPE |
-| RFQ | Sec. 34.3(b): ≤₱200,000 no posting; above that, 3 calendar days on PhilGEPS/agency site/premises (Sec. 50.3.2) | Generate RFQ from Standard Form, apply anti-tailor-fitting check, log invitees and timestamps | BAC/Canvasser confirms invitee list |
+| RFQ | Sec. 34.3(b): ≤₱200,000 no posting; above that, 3 calendar days on PhilGEPS/agency site/premises (Sec. 50.3.2) | Generate RFQ from the registered **Recommended** form (not a Standard Form), apply anti-tailor-fitting check, log invitees and timestamps | BAC/Canvasser confirms invitee list |
 | Quotations | Sec. 34.3(c): send to ≥3 qualified suppliers; **1 quotation is sufficient to proceed** | Extract quotations into structured comparison table; never auto-reject | — |
 | Abstract | Names of respondents + quotations/ratings (Sec. 34.3(f)) | Build abstract; flag quotes near ABC or suspiciously identical formatting (flag only) | BAC reviews and signs |
 | Award | Sec. 34.3(g): LCRB / MEARB / MARB / HRRB — **not automatically the lowest quote** | Draft recommendation from evaluation data | BAC recommends; HOPE approves and signs |
@@ -155,7 +166,7 @@ Also add to the timeline tracker: protest and request-for-reconsideration deadli
 
 - **Qwen2.5-3B fine-tune** → extraction, field classification, document-type detection **only**. Constrained JSON decoding with schema validation.
 - **Rules engine** → all presence checks, date/expiry validity, arithmetic, ranking, threshold comparisons. No LLM in this path.
-- **Drafting** → deterministic Standard Form templates; LLM fills fields from approved data, never writes legal prose. A 3B model must not author BAC resolutions or contract clauses.
+- **Drafting** → deterministic registered form templates (Standard and Recommended classified separately); LLM fills fields from approved data, never writes legal prose. A 3B model must not author BAC resolutions or contract clauses. Official form bodies must be hashed and registered by a human before a release-ready document can be produced.
 - **Verdict schema:** `status`, `missing_documents[]`, `invalid_documents[]`, `notes[]`, `evidence_spans[]`, `rule_citations[]`, `confidence`, `decision = pass | fail | ABSTAIN`, `model_version`, `ruleset_version`, `corpus_snapshot_id`.
 - **Abstention:** below calibrated threshold, or on citation mismatch, output `ABSTAIN` and route to a human. No silent best-guess.
 - **Evaluation:** per-document-type **recall on missing/invalid detection** (false negatives are the audit risk), extraction F1, citation accuracy, retrieval accuracy, hallucination rate, and a red-team set of near-miss/altered documents. Frozen benchmark set, never used for training.
@@ -195,7 +206,7 @@ Registries required: model version table (training snapshot, eval scores per sli
 | 2 | **Numbering service** | Cheap, prevents recurring audit findings, everything depends on it (keep from original plan) |
 | 3 | **State machine with the sealed-bid custody gate** | Encodes the highest legal risk as a technical impossibility, not a policy |
 | 4 | **Document checker (extraction-only) + rules engine** | Core verdict engine; advisory, evidence-backed, abstaining |
-| 5 | **Standard Form template library (GPPB Res. 03-2025)** | Legal text must be deterministic before any drafting assistant |
+| 5 | **Form registry + template library (GPPB Res. 03-2025, both classifications)** | Legal text must be deterministic before any drafting assistant; official bodies hash-registered by a human |
 | 6 | **Drafting assistant (field-fill only)** | Depends on 1, 2, 5 |
 | 7 | **As-of RAG + citation verification** | Adds traceability; needs corpus versioning from 1 |
 | 8 | **Audit folder compiler** | Now a read-only view over the ledger, not a late-stage project |
@@ -213,3 +224,5 @@ Registries required: model version table (training snapshot, eval scores per sli
 5. **Open:** whether PhilGEPS offers a supported write API for posting. Until confirmed, Stage 2 generates a posting package and captures proof manually.
 6. **Open:** whether DICT RO2 has an internal procurement manual and an existing BAC resolution/logbook to import.
 7. **Open:** e-signature acceptance (PNPKI / RA 8792) for hard gates, or wet-ink with scanned logged sign-off.
+8. **Open:** GPPB authorization for accomplishing Standard Forms through an online platform (Res. 03-2025 common revision (a)) — required before a system-generated form can be treated as an accomplished form.
+9. **Open:** official form bodies (PDF/DOCX) for all 36 Res. 03-2025 forms must be downloaded, hashed and registered by a named human; until then the system emits only labelled structural drafts.

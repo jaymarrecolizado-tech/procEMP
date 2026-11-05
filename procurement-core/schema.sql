@@ -149,3 +149,30 @@ CREATE TABLE IF NOT EXISTS verdict (
   payload    TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS form_registry (
+  code                  TEXT PRIMARY KEY,
+  name                  TEXT NOT NULL,
+  classification        TEXT NOT NULL,
+  category              TEXT NOT NULL,
+  applies_to            TEXT NOT NULL,
+  required_fields       TEXT NOT NULL,
+  official_file_hash    TEXT,
+  official_file_version TEXT,
+  body_available        INTEGER NOT NULL DEFAULT 0,
+  verified              INTEGER NOT NULL DEFAULT 0,
+  source                TEXT NOT NULL,
+  note                  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS draft (
+  id              TEXT PRIMARY KEY,
+  tx_id           TEXT NOT NULL REFERENCES proc_tx(id),
+  form_code       TEXT NOT NULL REFERENCES form_registry(code),
+  body            TEXT NOT NULL,
+  content_hash    TEXT NOT NULL,
+  status          TEXT NOT NULL,
+  approved_fields TEXT NOT NULL,
+  created_at      TEXT NOT NULL,
+  created_by      TEXT NOT NULL
+);

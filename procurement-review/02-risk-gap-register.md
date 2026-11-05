@@ -7,7 +7,7 @@
 
 **Severity:** `P0` = legally or architecturally invalidating; fix before building. `P1` = material compliance/quality risk; fix before pilot. `P2` = hardening / completeness.
 
-**Summary:** 3 × P0 · 14 × P1 · 9 × P2 = **26 findings**. Nine items are go-live blockers (marked **GL**).
+**Summary:** 3 × P0 · 14 × P1 · 10 × P2 = **27 findings**. Nine items are go-live blockers (marked **GL**).
 
 ---
 
@@ -41,6 +41,7 @@
 | R-24 | **P2** | Numbering | No void/cancellation semantics; a gap is treated as a defect | Registry detail §176 | Legitimate voided numbers become false audit findings | Void-with-reason, per-unit/per-year sequences, DB sequence under transaction, immutable log | Engineering | 2 |
 | R-25 | **P2** | Coverage | Only two of eleven modes have workflows; protest/reconsideration deadlines absent | IRR **Sec. 26.1**, **Sec. 66 / 84** | Untracked modes bypass controls; missed statutory deadlines | Stubs for all modes that still resolve regime, number, log, and compile audit folder; add protest timelines to tracker | BAC Sec | 3 |
 | R-26 | **P2** | Stage 9 | "Fully automatable / no approval" without immutability at archive | Workflow §82–88 | Audit package can be altered after compilation | Hash-seal folder at archiving; BAC Sec review recorded in ledger; WORM storage | IT | 8 |
+| R-27 | **P2** | Forms | Design treats all GPPB forms as mandatory "Standard Forms"; no classification, and no GPPB authorization check for online accomplishment | GPPB **Res. 03-2025** pp. 3–4: only Strategic Planning Forms, PBD and PBD Related Forms are Standard Forms; "other forms" (incl. **NOA, Abstract of Bids, RFQ**) are Recommended and explicitly *not* Standard Forms; common revision (a) allows online accomplishment only "as may be authorized by the GPPB" | Misstated legal basis in BAC docs; generated forms could be treated as official without authorization | Form registry with `classification` per form; obtain GPPB authorization; block release until official bodies are hash-registered by a human | Legal / BAC Sec | 5 |
 
 ---
 
@@ -56,7 +57,7 @@ R-01, R-02, R-03, R-04, R-07, R-12, R-14, R-18, R-19. None may be waived by conf
 | 2 | Numbering service with void semantics | R-24 |
 | 3 | State machine: custody gate, human gates, timelines, mode stubs | R-03, R-07 (gate), R-09, R-11, R-19, R-25 |
 | 4 | Extraction-only checker + rules engine + abstention | R-14, R-16 |
-| 5 | GPPB Res. 03-2025 Standard Form library | R-04 |
+| 5 | GPPB Res. 03-2025 form registry (Standard + Recommended), official-body hash registration | R-04, R-27 |
 | 6 | Field-fill drafting assistant | R-15 |
 | 7 | As-of RAG with citation verification | R-05 (rules), R-08, R-17, R-23 |
 | 8 | Audit folder compiler (read-only view) | R-26 |

@@ -82,11 +82,16 @@ CREATE TABLE rule (
 CREATE TABLE form_template (
   id            uuid PRIMARY KEY,
   ruleset_id    uuid REFERENCES ruleset(id),
-  code          text NOT NULL,           -- 'RFQ_SVP_V3', 'NOA_V3'
+  code          text NOT NULL,           -- 'RFQ_REI', 'NOTICE_OF_AWARD'
+  classification text NOT NULL CHECK (classification IN ('STANDARD','RECOMMENDED')),
   version       text NOT NULL,
-  file_hash     text NOT NULL,
+  file_hash     text,                   -- NULL until a human registers the official body
+  verified      boolean NOT NULL DEFAULT false,
   effective_from date NOT NULL
 );
+-- GPPB Res. 03-2025: only Strategic Planning Forms, PBD and PBD Related Forms
+-- are Standard Forms. NOA, Abstract of Bids, RFQ etc. are Recommended ("other forms").
+-- A NULL file_hash means the system may emit only a labelled structural draft.
 
 CREATE TABLE corpus_snapshot (
   id            uuid PRIMARY KEY,

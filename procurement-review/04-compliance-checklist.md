@@ -38,7 +38,10 @@
 
 | ✓ | Item | Evidence to retain | Owner |
 |---|---|---|---|
-| ☐ | **GL** All generated documents use the applicable Standard Forms (GPPB Res. 03-2025 for RA 12009 transactions; 2016-era forms for legacy) | Template registry with form IDs, versions, file hashes | BAC Sec |
+| ☐ | **GL** All generated documents use the applicable GPPB Res. 03-2025 form (2016-era forms for legacy transactions) | Form registry with form IDs, versions, official file hashes | BAC Sec |
+| ☐ | **GL** Form registry preserves the **Standard vs Recommended** classification from Res. 03-2025. RFQ, Abstract of Bids and Notice of Award are **Recommended** forms ("other forms"), explicitly *not* Standard Forms | `seed_forms.json` export (14 Standard / 22 Recommended) + legal review | Legal / BAC Sec |
+| ☐ | **GL** Official form bodies downloaded, hashed and registered by a named human before any release-ready document is produced; unregistered forms emit only labelled structural drafts | `OFFICIAL_FORM_REGISTERED` events + hash manifest | BAC Sec |
+| ☐ | Confirm GPPB authorization for accomplishing Standard Forms **through an online platform** (Res. 03-2025 common revision (a): "as may be authorized by the GPPB") | Written GPPB guidance or legal opinion | Legal |
 | ☐ | **GL** Mode selection uses Fit-for-Purpose + thresholds (IRR Sec. 26.1), not thresholds alone; human confirms | Mode-selection record with justification | BAC |
 | ☐ | All 11 RA 12009 modes (and legacy modes) have at least a stub that resolves regime, issues numbers, logs events and produces an audit folder | Mode coverage matrix | Engineering |
 | ☐ | SVP configured per IRR Sec. 34: ₱2,000,000 threshold (GPPB may revise), ≤₱200,000 no posting, ≥3 invited but 1 quotation suffices, 3-calendar-day posting above ₱200k | Rules registry export | Legal / BAC Sec |
@@ -109,7 +112,7 @@
 1. GPPB transition guidance obtained and regime decision documented (**A**)
 2. Internal instrument defining AI as decision support signed (**A**)
 3. Rules registry populated with verified values for both regimes (**A**, **C**)
-4. Standard Form library active and version-pinned (**C**)
+4. Form registry active, version-pinned, Standard/Recommended classification verified, official bodies registered (**C**)
 5. Custody gate and human gates pass negative tests A4–A9 (**B**, **F**)
 6. Append-only ledger live, chain verifiable, COA verification endpoint available (**D**)
 7. DPIA signed; no off-box inference; anonymization pipeline in place (**E**)

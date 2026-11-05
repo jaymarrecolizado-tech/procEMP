@@ -13,6 +13,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import core
 from checker import evaluate_submission, sample_checklist
+from forms import (
+    render_draft, register_official_form, apply_human_edit, cross_check_fields,
+    list_forms, NOT_REGISTERED, DRAFT_UNSIGNED,
+)
 from core import (
     CoreError, GateBlocked, PolicyBlocked, RuleResolutionError, UnverifiedRuleError,
     canonical, init_db, suggest_regime, resolve_rules, get_rule,
@@ -262,7 +266,7 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(folder["manifest"]["folder_hash"],
                          sha256_text(canonical({k: folder[k] for k in
                                                 ("transaction", "events", "documents",
-                                                 "signoffs", "verdicts")})))
+                                                 "signoffs", "verdicts", "drafts")})))
 
 
 def complete_extraction():
@@ -340,6 +344,118 @@ class CheckerTests(unittest.TestCase):
             evaluate_submission(self.conn, legacy,
                                 sample_checklist("RA9184_2016IRR@2016-10-28"),
                                 complete_extraction())
+
+
+def noa_fields(amount=950000):
+    return {
+        "approved_by": "bac-secretariat-01",
+        "values": {"awardee_name": "ACME Corp", "project_title": "Laptop supply",
+                   "contract_amount": amount, "hop_e_signature": "PENDING"},
+        "source_refs": {"awardee_name": "BAC Resolution 2026-011",
+                        "project_title": "Approved PR RO2-PR-2026-00001",
+                        "contract_amount": "Abstract of Quotations 2026-011",
+                        "hop_e_signature": "HOPE signature sheet"},
+    }
+
+
+class FormTests(unittest.TestCase):
+
+    def setUp(self):
+        self.conn = init_db(":memory:")
+        self.tx = new_tx(self.conn)
+        open_bids(self.conn, self.tx)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_registry_classification_matches_gppb_resolution(self):
+        standard = {f["code"] for f in list_forms(self.conn, classification="STANDARD")}
+        recommended = {f["code"] for f in list_forms(self.conn, classification="RECOMMENDED")}
+        self.assertIn("APP", standard)
+        self.assertIn("OSS", standard)
+        self.assertIn("PBD_GOODS", standard)
+        for code in ("NOTICE_OF_AWARD", "ABSTRACT_OF_BIDS", "RFQ_REI"):
+            self.assertIn(code, recommended, f"{code} is a RECOMMENDED form, not STANDARD")
+        self.assertEqual(len(standard) + len(recommended), 36)
+
+    def test_unregistered_official_body_blocks_release(self):
+        with self.assertRaises(CoreError):
+            render_draft(self.conn, self.tx, "NOTICE_OF_AWARD", noa_fields(),
+                         for_release=True)
+
+    def test_structural_draft_is_labelled_and_advisory(self):
+        draft = render_draft(self.conn, self.tx, "NOTICE_OF_AWARD", noa_fields())
+        self.assertEqual(draft["status"], NOT_REGISTERED)
+        self.assertTrue(draft["AI_DRAFTED"])
+        self.assertIn("NOT A LEGAL FORM", draft["body"])
+        self.assertIn("source: BAC Resolution 2026-011", draft["body"])
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM ledger_event WHERE tx_id=? AND event_type='AI_DRAFT_CREATED'",
+            (self.tx,)).fetchone()["c"], 1)
+
+    def test_unknown_and_missing_fields_are_rejected_not_invented(self):
+        bad = noa_fields()
+        bad["values"]["invented_clause"] = "something the model made up"
+        with self.assertRaises(CoreError):
+            render_draft(self.conn, self.tx, "NOTICE_OF_AWARD", bad)
+        bad2 = noa_fields()
+        del bad2["values"]["contract_amount"]
+        with self.assertRaises(CoreError):
+            render_draft(self.conn, self.tx, "NOTICE_OF_AWARD", bad2)
+        bad3 = noa_fields()
+        del bad3["source_refs"]["awardee_name"]
+        with self.assertRaises(CoreError):
+            render_draft(self.conn, self.tx, "NOTICE_OF_AWARD", bad3)
+
+    def test_form_not_applicable_to_mode(self):
+        with self.assertRaises(CoreError):
+            render_draft(self.conn, self.tx, "RFQ_REI", {
+                "approved_by": "bac-secretariat-01",
+                "values": {"pr_number": "PR-1", "item_description": "Laptops",
+                           "abc": 900000, "submission_deadline": "2026-11-20"},
+                "source_refs": {"pr_number": "PR", "item_description": "PR",
+                                "abc": "APP", "submission_deadline": "RFQ schedule"},
+            })
+
+    def test_human_edit_changes_hash_and_invalidates_signoff(self):
+        draft = render_draft(self.conn, self.tx, "NOTICE_OF_AWARD", noa_fields())
+        old = draft["content_hash"]
+        add_signoff(self.conn, self.tx, "CONTENT_INGESTION", "EVALUATION",
+                    "bac-chair-01", "BAC_CHAIR", old)
+        edit = apply_human_edit(self.conn, draft["draft_id"],
+                                draft["body"] + "\nHuman correction.\n", "bac-secretariat-01")
+        self.assertNotEqual(old, edit["new_hash"])
+        with self.assertRaises(GateBlocked):
+            request_transition(self.conn, self.tx, "EVALUATION", old)
+        with self.assertRaises(GateBlocked):
+            request_transition(self.conn, self.tx, "EVALUATION", edit["new_hash"])
+        add_signoff(self.conn, self.tx, "CONTENT_INGESTION", "EVALUATION",
+                    "bac-chair-01", "BAC_CHAIR", edit["new_hash"])
+        request_transition(self.conn, self.tx, "EVALUATION", edit["new_hash"])
+        self.assertEqual(get_tx(self.conn, self.tx)["stage"], "EVALUATION")
+
+    def test_registered_official_form_allows_release_draft(self):
+        register_official_form(self.conn, "NOTICE_OF_AWARD", "a" * 64,
+                               "GPPB-03-2025-NOA-v1", "bac-secretariat-01")
+        draft = render_draft(self.conn, self.tx, "NOTICE_OF_AWARD", noa_fields(),
+                             for_release=True)
+        self.assertEqual(draft["status"], DRAFT_UNSIGNED)
+        self.assertIn("UNSIGNED", draft["body"])
+
+    def test_cross_check_detects_contract_vs_bidding_doc_mismatch(self):
+        render_draft(self.conn, self.tx, "NOTICE_OF_AWARD", noa_fields(amount=950000))
+        render_draft(self.conn, self.tx, "CONTRACT_FORM", {
+            "approved_by": "bac-secretariat-01",
+            "values": {"contract_number": "C-2026-001", "supplier_name": "ACME Corp",
+                       "contract_amount": 990000, "hop_e_signature": "PENDING"},
+            "source_refs": {"contract_number": "Numbering service",
+                            "supplier_name": "NOA", "contract_amount": "Contract draft",
+                            "hop_e_signature": "HOPE signature sheet"},
+        })
+        result = cross_check_fields(self.conn, self.tx, "NOTICE_OF_AWARD",
+                                    "CONTRACT_FORM", ["contract_amount"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["mismatches"][0]["field"], "contract_amount")
 
 
 if __name__ == "__main__":

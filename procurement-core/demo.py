@@ -97,15 +97,32 @@ def main():
     print("   unreadable scan:", v3["decision"],
           "(routed to human, never a disqualification)")
 
+    from forms import render_draft, list_forms
+    noa = {
+        "approved_by": "bac-secretariat-01",
+        "values": {"awardee_name": "ACME Corp", "project_title": "Laptop supply",
+                   "contract_amount": 950000, "hop_e_signature": "PENDING"},
+        "source_refs": {"awardee_name": "BAC Resolution 2026-011",
+                        "project_title": "Approved PR RO2-PR-2026-00001",
+                        "contract_amount": "Abstract of Quotations 2026-011",
+                        "hop_e_signature": "HOPE signature sheet"},
+    }
+    draft = render_draft(conn, tx, "NOTICE_OF_AWARD", noa)
+    noa_class = [f["classification"] for f in list_forms(conn)
+                 if f["code"] == "NOTICE_OF_AWARD"][0]
+    print("8. Deterministic drafting:", draft["status"])
+    print("   Notice of Award is a", noa_class, "form (NOT a Standard Form);",
+          "official body not registered -> release blocked")
+
     folder = export_folder(conn, tx)
-    print("8. Audit folder:", folder["manifest"]["event_count"], "events |",
+    print("9. Audit folder:", folder["manifest"]["event_count"], "events |",
           "chain ok:", folder["manifest"]["chain_ok"], "|",
           "folder hash:", folder["manifest"]["folder_hash"][:16], "...")
 
     with tempfile.TemporaryDirectory() as tmp:
         target = os.path.join(tmp, "vps.db")
         report = migrate(conn, target, actor_id="it-admin-01")
-        print("9. Local -> VPS migration:", report["events_checked"],
+        print("10. Local -> VPS migration:", report["events_checked"],
               "events copied | chain ok:", report["ok"])
 
     print("\nDone. No external AI/embedding API was called at any point.")

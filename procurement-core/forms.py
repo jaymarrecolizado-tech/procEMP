@@ -1,0 +1,200 @@
+"""Step 5: GPPB Res. 03-2025 form registry + deterministic drafting.
+
+Design rule: no LLM writes legal prose. The system only fills named fields from
+approved, traceable sources. The official form bodies are NOT bundled, so by
+default the output is a clearly-labelled STRUCTURAL DRAFT that cannot be released.
+A human must download the official form, hash it, and register it before a
+release-ready document can be produced.
+
+Important legal distinction from GPPB Res. 03-2025:
+  STANDARD    = Strategic Planning Forms, PBD, PBD Related Forms (mandatory use)
+  RECOMMENDED = "other forms"; explicitly NOT classified as Standard Forms
+Notice of Award, Abstract of Bids and RFQ are RECOMMENDED forms, not Standard Forms.
+"""
+
+from __future__ import annotations
+
+import json
+
+from core import (
+    CoreError, canonical, uid, now, sha256_text, append_event, get_tx,
+    resolve_rules, get_rule,
+)
+
+FORM_SET = "GPPB-RES-03-2025-STANDARD-FORMS"
+NOT_REGISTERED = "STRUCTURAL_DRAFT_NOT_FOR_USE"
+DRAFT_UNSIGNED = "DRAFT_UNSIGNED"
+
+
+def _form(conn, code):
+    row = conn.execute("SELECT * FROM form_registry WHERE code = ?", (code,)).fetchone()
+    if not row:
+        raise CoreError(f"unknown form code: {code}")
+    return row
+
+
+def list_forms(conn, classification=None, mode=None):
+    rows = conn.execute("SELECT * FROM form_registry ORDER BY code").fetchall()
+    result = []
+    for r in rows:
+        if classification and r["classification"] != classification:
+            continue
+        applies = json.loads(r["applies_to"])
+        if mode and "*" not in applies and mode not in applies:
+            continue
+        result.append({
+            "code": r["code"], "name": r["name"],
+            "classification": r["classification"], "category": r["category"],
+            "official_body_registered": bool(r["verified"]),
+            "required_fields": json.loads(r["required_fields"]),
+        })
+    return result
+
+
+def register_official_form(conn, code, file_hash, version, approver):
+    """A named human registers the official form body. Fails closed until then."""
+    _form(conn, code)
+    if not file_hash or not version or not approver:
+        raise CoreError("file_hash, version and approver are all required")
+    conn.execute(
+        "UPDATE form_registry SET official_file_hash=?, official_file_version=?, "
+        "body_available=1, verified=1 WHERE code=?",
+        (file_hash, version, code),
+    )
+    return append_event(conn, "SYSTEM", "OFFICIAL_FORM_REGISTERED", approver,
+                        "BAC_SECRETARIAT", {
+                            "form_code": code, "official_file_hash": file_hash,
+                            "version": version, "registered_at": now(),
+                        })
+
+
+def _validate_fields(form, approved_fields):
+    if not isinstance(approved_fields, dict):
+        raise CoreError("approved_fields must be a dict")
+    if not approved_fields.get("approved_by"):
+        raise CoreError("approved_by (a named human) is required")
+    values = approved_fields.get("values")
+    source_refs = approved_fields.get("source_refs")
+    if not isinstance(values, dict) or not isinstance(source_refs, dict):
+        raise CoreError("values and source_refs are required")
+    required = json.loads(form["required_fields"])
+    unknown = set(values) - set(required)
+    if unknown:
+        raise CoreError(f"unknown fields for {form['code']}: {sorted(unknown)}")
+    missing = [k for k in required if k not in values]
+    if missing:
+        raise CoreError(f"missing fields for {form['code']}: {missing} - never auto-generated")
+    for k in required:
+        v = values[k]
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise CoreError(f"empty value for {k} - never auto-generated")
+        if k not in source_refs or not str(source_refs[k]).strip():
+            raise CoreError(f"no approved source_ref for field {k}")
+    return required, values, source_refs
+
+
+def _build_structural_body(form, tx, required, values, source_refs, release_ready):
+    lines = [
+        "STRUCTURAL DRAFT - NOT A LEGAL FORM - NOT FOR RELEASE" if not release_ready
+        else "DRAFT - UNSIGNED - HUMAN SIGNATURE REQUIRED",
+        "",
+        f"Form: {form['code']} - {form['name']}",
+        f"Classification: {form['classification']} (GPPB Resolution No. 03-2025)",
+        f"Transaction: {tx['number']}",
+        f"Regime / ruleset: {tx['regime']} / {tx['ruleset_version']}",
+        f"Official form body: "
+        + (f"registered ({form['official_file_version']}, {form['official_file_hash'][:16]}...)"
+           if form["verified"] else "NOT REGISTERED - release blocked"),
+        "",
+        "-" * 60,
+    ]
+    for key in required:
+        lines.append(f"{key}: {values[key]}   [source: {source_refs[key]}]")
+    lines += [
+        "-" * 60,
+        "",
+        "AI_DRAFTED: true - field-fill only, no legal prose generated by a model.",
+        "Every value above is traceable to an approved source reference.",
+        "Human review and signature are required. Editing invalidates any prior signoff.",
+        "",
+        f"Generated at: {now()}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_draft(conn, tx_id, form_code, approved_fields, created_by="drafting-assistant",
+                 for_release=False):
+    tx = get_tx(conn, tx_id)
+    resolved = resolve_rules(conn, tx["posting_date"], tx["regime"])
+    if get_rule(conn, resolved, "FORM_SET") != FORM_SET:
+        raise CoreError("transaction ruleset does not resolve to the GPPB Res. 03-2025 form set")
+    form = _form(conn, form_code)
+    applies = json.loads(form["applies_to"])
+    if "*" not in applies and tx["mode"] not in applies:
+        raise CoreError(f"form {form_code} does not apply to mode {tx['mode']}")
+    if for_release and not form["verified"]:
+        raise CoreError(
+            f"official body for {form_code} is not registered; cannot produce a "
+            "release-ready document (fail closed)"
+        )
+    required, values, source_refs = _validate_fields(form, approved_fields)
+    release_ready = bool(form["verified"])
+    body = _build_structural_body(form, tx, required, values, source_refs, release_ready)
+    content_hash = sha256_text(body)
+    status = DRAFT_UNSIGNED if release_ready else NOT_REGISTERED
+    draft_id = uid()
+    conn.execute(
+        "INSERT INTO draft (id, tx_id, form_code, body, content_hash, status, "
+        "approved_fields, created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?)",
+        (draft_id, tx_id, form_code, body, content_hash, status,
+         canonical(approved_fields), now(), created_by),
+    )
+    append_event(conn, tx_id, "AI_DRAFT_CREATED", created_by, "DRAFTING_ASSISTANT", {
+        "draft_id": draft_id, "form_code": form_code,
+        "classification": form["classification"],
+        "content_hash": content_hash, "status": status,
+        "AI_DRAFTED": True, "approved_by": approved_fields["approved_by"],
+        "official_body_registered": bool(form["verified"]),
+    })
+    return {"draft_id": draft_id, "content_hash": content_hash,
+            "status": status, "body": body, "AI_DRAFTED": True}
+
+
+def apply_human_edit(conn, draft_id, edited_body, editor_id):
+    row = conn.execute("SELECT * FROM draft WHERE id = ?", (draft_id,)).fetchone()
+    if not row:
+        raise CoreError("unknown draft")
+    old_hash = row["content_hash"]
+    new_hash = sha256_text(edited_body)
+    conn.execute("UPDATE draft SET body=?, content_hash=? WHERE id=?",
+                 (edited_body, new_hash, draft_id))
+    append_event(conn, row["tx_id"], "HUMAN_EDIT_APPLIED", editor_id, "BAC_SECRETARIAT", {
+        "draft_id": draft_id, "form_code": row["form_code"],
+        "old_hash": old_hash, "new_hash": new_hash,
+        "note": "any signoff bound to the old hash is now invalid",
+    })
+    return {"draft_id": draft_id, "old_hash": old_hash, "new_hash": new_hash}
+
+
+def cross_check_fields(conn, tx_id, form_a, form_b, keys):
+    """Stage 6 consistency check: contract terms vs original bidding documents."""
+    def latest(code):
+        row = conn.execute(
+            "SELECT approved_fields FROM draft WHERE tx_id=? AND form_code=? "
+            "ORDER BY created_at DESC LIMIT 1", (tx_id, code),
+        ).fetchone()
+        return json.loads(row["approved_fields"])["values"] if row else None
+    a, b = latest(form_a), latest(form_b)
+    if a is None or b is None:
+        raise CoreError(f"both forms must have drafts: {form_a}, {form_b}")
+    mismatches = []
+    for key in keys:
+        if key not in a or key not in b:
+            mismatches.append({"field": key, "problem": "field absent in one draft"})
+        elif a[key] != b[key]:
+            mismatches.append({"field": key, form_a: a[key], form_b: b[key]})
+    append_event(conn, tx_id, "CONSISTENCY_CHECK", "system", "RULES_ENGINE", {
+        "form_a": form_a, "form_b": form_b, "keys": keys,
+        "mismatches": mismatches,
+    })
+    return {"ok": not mismatches, "mismatches": mismatches}

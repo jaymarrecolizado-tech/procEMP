@@ -21,6 +21,7 @@ ABSTAIN_THRESHOLD = 0.75
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCHEMA_PATH = os.path.join(HERE, "schema.sql")
 SEED_PATH = os.path.join(HERE, "seed_rules.json")
+SEED_FORMS_PATH = os.path.join(HERE, "seed_forms.json")
 
 STAGES = [
     "DRAFT", "PLANNING", "BIDDING_DOCS", "ADVERTISEMENT", "RECEIVING",
@@ -89,6 +90,7 @@ def init_db(path: str = ":memory:", seed: bool = True) -> sqlite3.Connection:
         conn.executescript(fh.read())
     if seed:
         load_seed(conn)
+        load_forms(conn)
     return conn
 
 
@@ -125,6 +127,23 @@ def load_seed(conn: sqlite3.Connection, path: str = SEED_PATH) -> None:
             (uid(), rule["ruleset_id"], rule["key"], canonical(rule["value"]),
              rule["section_ref"], rule.get("mode", "*"), int(rule.get("verified", False)),
              rule.get("note")),
+        )
+
+
+def load_forms(conn: sqlite3.Connection, path: str = SEED_FORMS_PATH) -> None:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    for form in data["forms"]:
+        conn.execute(
+            "INSERT OR REPLACE INTO form_registry "
+            "(code, name, classification, category, applies_to, required_fields, "
+            " official_file_hash, official_file_version, body_available, verified, source, note) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (form["code"], form["name"], form["classification"], form["category"],
+             canonical(form["applies_to"]), canonical(form["required_fields"]),
+             form.get("official_file_hash"), form.get("official_file_version"),
+             int(form.get("body_available", False)), int(form.get("verified", False)),
+             data["source"], form.get("note")),
         )
 
 
@@ -454,6 +473,17 @@ def request_transition(conn, tx_id, to_stage, current_document_hash) -> dict:
             "reason": "BID_OPENING_RECORDED event missing",
         })
         raise GateBlocked("public bid opening must be recorded before content ingestion")
+    latest = conn.execute(
+        "SELECT content_hash FROM draft WHERE tx_id=? ORDER BY created_at DESC LIMIT 1",
+        (tx_id,),
+    ).fetchone()
+    if latest and latest["content_hash"] != current_document_hash:
+        append_event(conn, tx_id, "GATE_BLOCKED", "system", "STATE_MACHINE", {
+            "from_stage": from_stage, "to_stage": to_stage,
+            "reason": "stale document hash: draft was edited after the signoff",
+            "supplied": current_document_hash, "current": latest["content_hash"],
+        })
+        raise GateBlocked("document was edited; signoffs bound to the old hash are invalid")
     gates = conn.execute(
         "SELECT * FROM stage_gate WHERE tx_id=? AND from_stage=? AND to_stage=?",
         (tx_id, from_stage, to_stage),
@@ -543,8 +573,11 @@ def export_folder(conn, tx_id) -> dict:
     verdicts = [dict(r) for r in conn.execute(
         "SELECT * FROM verdict WHERE tx_id=? ORDER BY created_at", (tx_id,)
     ).fetchall()]
+    drafts = [dict(r) for r in conn.execute(
+        "SELECT * FROM draft WHERE tx_id=? ORDER BY created_at", (tx_id,)
+    ).fetchall()]
     body = {"transaction": tx, "events": events, "documents": documents,
-            "signoffs": signoffs, "verdicts": verdicts}
+            "signoffs": signoffs, "verdicts": verdicts, "drafts": drafts}
     chain = verify_chain(conn)
     return {**body, "manifest": {
         "folder_hash": sha256_text(canonical(body)),
@@ -564,8 +597,9 @@ def migrate(source_conn, target_path, actor_id="it-admin") -> dict:
         data = json.load(fh)
     target.execute("INSERT INTO transition_policy (id,status,note) VALUES (1,?,?)",
                    (data["transition_policy"]["status"], data["transition_policy"]["note"]))
-    for table in ("ruleset", "rule", "corpus_snapshot", "proc_tx", "stage_gate",
-                  "signoff", "number_sequence", "issued_number", "document", "verdict"):
+    for table in ("ruleset", "rule", "corpus_snapshot", "form_registry", "proc_tx",
+                  "stage_gate", "signoff", "number_sequence", "issued_number",
+                  "document", "verdict", "draft"):
         cols = [r[1] for r in source_conn.execute(f"PRAGMA table_info({table})").fetchall()]
         collist = ",".join(cols)
         rows = source_conn.execute(f"SELECT {collist} FROM {table}").fetchall()
