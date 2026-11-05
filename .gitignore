@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Local databases and temporary artifacts
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.log
+tmp/
+temp/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# WorkBuddy workspace data (agent memory / session state, not project source)
+.workbuddy-ai/

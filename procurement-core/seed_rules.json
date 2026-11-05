@@ -1,0 +1,72 @@
+{
+  "_comment": "Seed configuration. Values marked verified=false are placeholders and MUST be confirmed by DICT legal / BAC Secretariat before use. Application fails closed when reading them.",
+  "transition_policy": {
+    "status": "UNCONFIRMED",
+    "note": "GPPB Res. 03-2025 (14 May 2025) states a subsequent issuance will clarify whether RA 9184 or RA 12009 applies during the 3-year transitory period (IRR RA 12009 Sec. 113). Until obtained, the legal officer must choose the regime explicitly per transaction."
+  },
+  "corpus_snapshots": [
+    {
+      "id": "corpus-ra12009-2025-02",
+      "version": "RA12009_IRR@2025-02",
+      "regime": "RA12009_IRR",
+      "checksum": "PLACEHOLDER_RA12009_IRR_GPPB_RES_03_2025",
+      "approved_by": "LEGAL_OFFICER_REQUIRED",
+      "is_active": 1
+    },
+    {
+      "id": "corpus-ra9184-2016",
+      "version": "RA9184_2016IRR@2016-10-28",
+      "regime": "RA9184_2016IRR",
+      "checksum": "PLACEHOLDER_2016_IRR_ANNEX_H",
+      "approved_by": "LEGAL_OFFICER_REQUIRED",
+      "is_active": 1
+    }
+  ],
+  "rulesets": [
+    {
+      "id": "rs-ra12009-2025-02",
+      "regime": "RA12009_IRR",
+      "version": "RA12009_IRR@2025-02",
+      "effective_from": "2025-02-01",
+      "effective_to": null,
+      "issuance_ref": "IRR of RA 12009 (GPPB, Feb 2025) + GPPB Res. No. 03-2025",
+      "checksum": "PROVISIONAL",
+      "approved_by": "LEGAL_OFFICER_REQUIRED",
+      "note": "effective_from is the publication month; exact effectivity is 15 calendar days after publication (IRR Sec. 117). Confirm."
+    },
+    {
+      "id": "rs-ra9184-2016",
+      "regime": "RA9184_2016IRR",
+      "version": "RA9184_2016IRR@2016-10-28",
+      "effective_from": "2016-10-28",
+      "effective_to": null,
+      "issuance_ref": "2016 Revised IRR of RA 9184 + Annex H + GPPB amendments",
+      "checksum": "UNVERIFIED",
+      "approved_by": "LEGAL_OFFICER_REQUIRED",
+      "note": "Legacy regime. Repealed by IRR RA 12009 Sec. 115; used only for transactions covered by the transitory period / legacy reference."
+    }
+  ],
+  "rules": [
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "MODES", "value": ["Competitive Bidding", "Limited Source Bidding", "Competitive Dialogue", "Unsolicited Offer with Bid Matching", "Direct Contracting", "Direct Acquisition", "Repeat Order", "Small Value Procurement", "Negotiated Procurement", "Direct Sales", "Direct Procurement for Science, Technology and Innovation"], "section_ref": "IRR RA 12009 Sec. 26.1", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "MODE_SELECTION", "value": "FIT_FOR_PURPOSE_PLUS_THRESHOLDS", "section_ref": "IRR RA 12009 Sec. 26.1, Sec. 75.2.4", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "SVP_THRESHOLD", "value": {"amount": 2000000, "currency": "PHP", "reviewable_by": "GPPB"}, "section_ref": "IRR RA 12009 Sec. 34.1", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "SVP_NO_POSTING_MAX", "value": {"amount": 200000, "currency": "PHP"}, "section_ref": "IRR RA 12009 Sec. 34.3(b), Sec. 50.3.2", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "SVP_POSTING_DAYS", "value": 3, "section_ref": "IRR RA 12009 Sec. 34.3(b), Sec. 50.3.2", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "SVP_MIN_INVITEES", "value": 3, "section_ref": "IRR RA 12009 Sec. 34.3(c)", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "SVP_MIN_QUOTATIONS_TO_PROCEED", "value": 1, "section_ref": "IRR RA 12009 Sec. 34.3(c)", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "POSTING_DAYS_COMPETITIVE", "value": 7, "section_ref": "IRR RA 12009 Sec. 50.3.1", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "CLARIFICATION_REQUEST_LEAD_DAYS", "value": 10, "section_ref": "IRR RA 12009 Sec. 51.5.1", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "BID_BULLETIN_LEAD_DAYS", "value": 7, "section_ref": "IRR RA 12009 Sec. 51.4, 51.5.1", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "AWARD_CRITERIA", "value": ["LCRB", "MEARB", "MARB", "HRRB"], "section_ref": "IRR RA 12009 Sec. 34.3(g), Sec. 58.2", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "FORM_SET", "value": "GPPB-RES-03-2025-STANDARD-FORMS", "section_ref": "GPPB Resolution No. 03-2025", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "CHECKLIST_AUTHORITY", "value": "BAC_APPROVED_PER_TRANSACTION", "section_ref": "IRR RA 12009 Sec. 59.1 (checklist as stated in the Instructions to Bidders)", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "BID_OPENING_PUBLIC", "value": true, "section_ref": "IRR RA 12009 Sec. 58.1, 58.5", "verified": true},
+    {"ruleset_id": "rs-ra12009-2025-02", "key": "FINANCIAL_ENVELOPE_SEALED_FOR", "value": ["MEARB", "MARB"], "section_ref": "IRR RA 12009 Sec. 58.2(b)", "verified": true},
+
+    {"ruleset_id": "rs-ra9184-2016", "key": "CHECKLIST_AUTHORITY", "value": {"status": "UNVERIFIED"}, "section_ref": "2016 IRR Sec. 30 / eligibility checklist", "verified": false, "note": "Legacy eligibility checklist must be confirmed before the checker can run on a legacy transaction."},
+    {"ruleset_id": "rs-ra9184-2016", "key": "MODES", "value": ["Competitive Bidding", "Limited Source Bidding", "Direct Contracting", "Repeat Order", "Shopping", "Small Value Procurement", "Negotiated Procurement"], "section_ref": "2016 Revised IRR RA 9184 Sec. 48-53", "verified": false, "note": "Confirm against consolidated 2016 IRR before use."},
+    {"ruleset_id": "rs-ra9184-2016", "key": "SVP_THRESHOLD", "value": {"status": "UNVERIFIED"}, "section_ref": "2016 IRR Annex H Sec. 53.9 + GPPB threshold amendments", "verified": false, "note": "Populate after BAC Secretariat confirms the applicable GPPB amendment in force on the transaction date."},
+    {"ruleset_id": "rs-ra9184-2016", "key": "SHOPPING_THRESHOLD", "value": {"status": "UNVERIFIED"}, "section_ref": "2016 IRR Annex H Sec. 52.1", "verified": false, "note": "Populate after confirmation."},
+    {"ruleset_id": "rs-ra9184-2016", "key": "POSTING_DAYS_COMPETITIVE", "value": {"status": "UNVERIFIED"}, "section_ref": "2016 IRR Sec. 21.2", "verified": false, "note": "Legacy posting periods vary by ABC; confirm."}
+  ]
+}
