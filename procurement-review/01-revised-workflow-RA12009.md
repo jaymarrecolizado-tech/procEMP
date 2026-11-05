@@ -5,7 +5,7 @@
 **Supersedes:** `ai-assisted-procurement-workflow.md` (RA 9184 / 2016 IRR baseline)
 **Target deployment:** DICT Regional Office II · local workstation first, then agency VPS
 **Legal sources verified:** IRR of RA 12009 (GPPB, Feb 2025), GPPB Resolution No. 03-2025 (14 May 2025), 2016 Revised IRR of RA 9184 (legacy, via GPPB/COA references)
-**Build status (2026-11-06):** steps 1–7 implemented in `procurement-core/` (stdlib-only prototype, 58 passing tests). Steps 8–10 pending. No model weights or embedding models are bundled; the Qwen2.5-3B fine-tune plugs in behind `extraction.LocalHTTPBackend`.
+**Build status (2026-11-06):** steps 1–8 implemented in `procurement-core/` (stdlib-only prototype, 72 passing tests). Steps 9–10 pending. No model weights or embedding models are bundled; the Qwen2.5-3B fine-tune plugs in behind `extraction.LocalHTTPBackend`.
 
 > **Read this first.** The previous design is structurally sound but legally stale. RA 12009 took effect 13 August 2024; Section 115 of its IRR **repeals RA 9184 and Commonwealth Act No. 138**. Section 113 keeps RA 9184 in force before the IRR's effectivity and grants a **three-year transitory period from GPPB approval of the Standard Forms** (GPPB Res. 03-2025, 14 May 2025 → approximately May 2028). GPPB Res. 03-2025 also states that a subsequent issuance will clarify which law applies during the transition. Until that guidance is obtained, this design supports **both regimes** rather than guessing.
 
@@ -116,7 +116,7 @@ Registry   Ledger       Checker      (templates)    Knowledge     Service
 | 7 Award docs | Draft BAC recommendation, NOA, NTP, Contract from approved outcome; consistency check vs bidding docs | BAC signs recommendation/resolution; HOPE signs | Yes — non-negotiable |
 | 8 Implementation | Milestone tracking, delay/LD/variation-order flags, status reports | Project manager / TWG decides | Advisory |
 | 9 Completion & payment | Completion-document validation, invoice vs contract/delivered quantity cross-check | Inspection Committee / Accounting certify | Yes |
-| 10 Records | Compile COA-ready folder from the ledger; meta-completeness check | BAC Secretariat reviews before archiving; hash-seal | Review |
+| 10 Records | Compile COA-ready folder from the ledger; meta-completeness check; WORM seal | BAC Secretariat reviews and seals; COA verifies read-only | Review + seal |
 
 **Stage 3/4 boundary (the single most important control):** no component — OCR service, vector index, model, dashboard, backup job — may read or index bid contents until the `BID_OPENING_RECORDED` event exists for that transaction. For electronic bids, the system never holds bidder passwords (Sec. 58.3). Financial envelopes for MEARB/MARB get a second, separately recorded opening gate. Late bids are logged and returned unopened.
 
@@ -225,9 +225,11 @@ Registries required: model version table (training snapshot, eval scores per sli
 | 5 | **Form registry + template library / field-fill drafting** | Done | Legal text must be deterministic; official bodies hash-registered by a human |
 | 6 | **OCR / extraction adapter (Qwen2.5-3B plug-in)** | Done | Model is a field extractor only; strict schema validation and loopback-only inference keep it inside the compliance boundary |
 | 7 | **As-of RAG + citation verification** | Done | Adds traceability; seeded with verified official passages, pinned per transaction, exact-section citation check |
-| 8 | **Audit folder compiler / COA packaging** | Next | `export_folder()` exists in the prototype; production COA packaging, WORM sealing and the COA verification endpoint remain |
-| 9 | **Monitoring dashboards** | Pending | Stage 8 / project tracker integration |
+| 8 | **COA packaging, WORM sealing, read-only verification endpoint** | Done | Immutable sealed folders, meta-completeness flags, hash-chain attestation, CLI + loopback HTTP verification |
+| 9 | **Monitoring dashboards** | Next | Stage 8 / project tracker integration |
 | 10 | **Correction logging + retraining pipeline** | Pending | Last — needs real production corrections to be meaningful |
+
+**COA packaging (`procurement-core/audit.py`, `coa_server.py`):** `compile_folder()` produces a read-only snapshot covering the transaction, every ledger event with hashes, documents and checksums, signoffs, verdicts, drafts, rule citations, corpus/model versions, the ledger-chain state it attests to, and a **stage-aware meta-completeness** check (flags are advisory, not legal findings). `seal_folder()` writes an immutable sealed row (DB triggers block UPDATE/DELETE) plus a `FOLDER_SEALED` event. Re-sealing unchanged content is idempotent; changed content requires a **new numbered version with a recorded reason**, and the old version is retained. `verify_sealed_folder()` recomputes the folder hash, replays the hash chain up to the attested sequence, and checks corpus integrity — all reads, no writes. `coa_server.py` exposes GET-only `/health`, `/verify-chain`, `/verify-folder`, `/folder`, `/integrity`, `/list-seals` on loopback, plus offline CLI commands for chain/folder verification, export and sealing. Production deployment should place an authenticated reverse proxy in front if COA needs LAN access.
 
 ---
 

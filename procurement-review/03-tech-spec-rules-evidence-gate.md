@@ -354,6 +354,12 @@ can_transition(tx, from, to):
 | A23 | Cite an explicit section that does not exist in the pinned corpus | `verified=false` + `CITATION_MISMATCH`; **no fuzzy fallback**; downstream verdict forced to `ABSTAIN` |
 | A24 | Alter a corpus passage after indexing | `verify()` and `verify_corpus_integrity()` both detect the hash change |
 | A25 | Build and activate a new GPPB corpus snapshot | Requires a named human approver; existing transactions keep their pinned snapshot; new transactions use the new one |
+| A26 | Compile a folder and inspect its sections | Contains transaction, regime context, all events with hashes, documents, signoffs, verdicts, drafts, citations, corpus/model versions, chain state, meta-completeness, manifest |
+| A27 | Seal the same unchanged folder twice | Idempotent — same `seal_id`, one sealed row |
+| A28 | Add a new event after sealing, then re-seal without a reason | Refused (WORM); with a `supersede_reason` a version 2 is created and version 1 is retained |
+| A29 | Alter sealed `content_json` directly | Verification fails `folder_hash_ok`; export refuses to write a package |
+| A30 | Query all COA HTTP GET routes | Correct status codes, and the ledger event count is unchanged (read-only); non-loopback bind is refused |
+| A31 | Migrate local → VPS with sealed folders present | Sealed rows copied, verification still passes on the target |
 
 ---
 
@@ -372,4 +378,7 @@ can_transition(tx, from, to):
 | Cited section missing from pinned corpus | `CITATION_MISMATCH` event; verdict forced to `ABSTAIN` — never a fuzzy substitution |
 | Corpus passage altered after indexing | Hash verification fails; corpus marked untrusted until a human re-approves |
 | New GPPB issuance published | New snapshot built but inactive until a named human approves; in-flight transactions unaffected |
+| Sealed folder edited directly | Trigger blocks UPDATE/DELETE; if bypassed, hash verification detects it and export is refused |
+| New documents arrive after archiving | A new numbered folder version is required with a recorded reason; the original stays intact |
+| COA endpoint bound to a non-loopback host | Refused; expose via authenticated reverse proxy instead |
 | Clock drift | Server time from a single NTP-synced source; `occurred_at` and `signed_at` validated against it |

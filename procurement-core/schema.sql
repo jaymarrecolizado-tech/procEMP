@@ -192,3 +192,30 @@ CREATE TABLE IF NOT EXISTS draft (
   created_at      TEXT NOT NULL,
   created_by      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS sealed_folder (
+  id                  TEXT PRIMARY KEY,
+  tx_id               TEXT NOT NULL REFERENCES proc_tx(id),
+  version             INTEGER NOT NULL,
+  folder_hash         TEXT NOT NULL,
+  attested_chain_head TEXT NOT NULL,
+  attested_last_seq   INTEGER NOT NULL,
+  content_json        TEXT NOT NULL,
+  sealed_at           TEXT NOT NULL,
+  sealed_by           TEXT NOT NULL,
+  supersedes_seal_id  TEXT,
+  supersede_reason    TEXT,
+  UNIQUE (tx_id, version)
+);
+
+CREATE TRIGGER IF NOT EXISTS sealed_folder_no_update
+BEFORE UPDATE ON sealed_folder
+BEGIN
+  SELECT RAISE(ABORT, 'sealed folders are immutable; create a superseding version');
+END;
+
+CREATE TRIGGER IF NOT EXISTS sealed_folder_no_delete
+BEFORE DELETE ON sealed_folder
+BEGIN
+  SELECT RAISE(ABORT, 'sealed folders are immutable');
+END;

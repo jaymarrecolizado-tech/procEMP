@@ -135,15 +135,27 @@ def main():
     print("   Notice of Award is a", noa_class, "form (NOT a Standard Form);",
           "official body not registered -> release blocked")
 
+    from audit import seal_folder, verify_sealed_folder, compile_folder
+    from coa_server import handle
+    seal = seal_folder(conn, tx, "bac-secretariat-01")
+    coa = verify_sealed_folder(conn, seal["id"])
+    print("10. COA folder sealed (WORM): version", seal["version"],
+          "| verification:", coa["ok"],
+          "| completeness flags:",
+          len(compile_folder(conn, tx)["meta_completeness"]["flags"]))
+    print("    read-only COA endpoint:",
+          handle(conn, "/verify-chain")[1]["ok"],
+          "|", handle(conn, "/integrity")[1]["ok"])
+
     folder = export_folder(conn, tx)
-    print("10. Audit folder:", folder["manifest"]["event_count"], "events |",
+    print("11. Audit folder:", folder["manifest"]["event_count"], "events |",
           "chain ok:", folder["manifest"]["chain_ok"], "|",
           "folder hash:", folder["manifest"]["folder_hash"][:16], "...")
 
     with tempfile.TemporaryDirectory() as tmp:
         target = os.path.join(tmp, "vps.db")
         report = migrate(conn, target, actor_id="it-admin-01")
-        print("11. Local -> VPS migration:", report["events_checked"],
+        print("12. Local -> VPS migration:", report["events_checked"],
               "events copied | chain ok:", report["ok"])
 
     print("\nDone. No external AI/embedding API was called at any point.")

@@ -628,7 +628,7 @@ def migrate(source_conn, target_path, actor_id="it-admin") -> dict:
                    (data["transition_policy"]["status"], data["transition_policy"]["note"]))
     for table in ("ruleset", "rule", "corpus_snapshot", "corpus_chunk", "form_registry", "proc_tx",
                   "stage_gate", "signoff", "number_sequence", "issued_number",
-                  "document", "verdict", "draft"):
+                  "document", "verdict", "draft", "sealed_folder"):
         cols = [r[1] for r in source_conn.execute(f"PRAGMA table_info({table})").fetchall()]
         collist = ",".join(cols)
         rows = source_conn.execute(f"SELECT {collist} FROM {table}").fetchall()

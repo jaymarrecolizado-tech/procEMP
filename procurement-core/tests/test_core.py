@@ -3,6 +3,9 @@
 Run:  python -m unittest discover -s tests -v
 """
 
+import contextlib
+import io
+import json
 import os
 import sys
 import tempfile
@@ -22,12 +25,17 @@ from extraction import (
     extract_and_check, validate_output, load_schema, valid_stub_response,
 )
 from rag import AsOfRAG, StubEmbedding, verify_corpus_integrity
+from audit import (
+    compile_folder, seal_folder, verify_sealed_folder, export_package,
+    list_seals, meta_completeness,
+)
+from coa_server import handle, _assert_loopback, main as coa_main
 from core import (
     CoreError, GateBlocked, PolicyBlocked, RuleResolutionError, UnverifiedRuleError,
     canonical, init_db, suggest_regime, resolve_rules, get_rule,
     create_transaction, get_tx, ingest_document, record_bid_opening,
     record_financial_opening, add_signoff, request_transition, submit_verdict,
-    export_folder, verify_chain, migrate, issue_number, sha256_text,
+    export_folder, verify_chain, migrate, issue_number, sha256_text, append_event,
 )
 
 H1 = sha256_text("minutes-v1")
@@ -712,6 +720,179 @@ class RAGTests(unittest.TestCase):
         hits = rag.retrieve("confidentiality of submitted bids", self.tx, top_k=2)
         self.assertTrue(hits)
         self.assertEqual(hits[0]["section"], "58.5")
+
+
+class AuditTests(unittest.TestCase):
+
+    def setUp(self):
+        self.conn = init_db(":memory:")
+        self.rag = AsOfRAG(self.conn)
+        self.r = resolve_rules(self.conn, "2026-11-05", "RA12009_IRR")
+        self.tx = new_tx(self.conn)
+        self.checklist = sample_checklist(self.r["ruleset_version"])
+        open_bids(self.conn, self.tx)
+        extract_and_check(self.conn, self.tx, self.checklist, PAGES,
+                          StubBackend(valid_stub_response()), rag=self.rag)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _seal(self, **kw):
+        return seal_folder(self.conn, self.tx, "bac-secretariat-01", **kw)
+
+    def test_compiled_folder_contains_full_lifecycle(self):
+        folder = compile_folder(self.conn, self.tx)
+        for key in ("transaction", "regime_context", "events", "documents",
+                    "signoffs", "verdicts", "drafts", "rule_citations",
+                    "corpus_chunks_used", "model_versions", "ledger_chain",
+                    "meta_completeness", "manifest"):
+            self.assertIn(key, folder)
+        self.assertTrue(folder["manifest"]["folder_hash"])
+        self.assertTrue(folder["manifest"]["corpus_integrity"])
+        self.assertEqual(folder["regime_context"]["regime"], "RA12009_IRR")
+        self.assertTrue(folder["rule_citations"])
+
+    def test_meta_completeness_flags_missing_lifecycle_items(self):
+        add_signoff(self.conn, self.tx, "CONTENT_INGESTION", "EVALUATION",
+                    "bac-chair-01", "BAC_CHAIR", H2)
+        request_transition(self.conn, self.tx, "EVALUATION", H2)
+        folder = compile_folder(self.conn, self.tx)
+        report = meta_completeness(folder)
+        self.assertTrue(report["checked"])
+        self.assertIn("note", report)
+        items = {c["item"] for c in report["checked"]}
+        self.assertIn("public_bid_opening_record", items)
+        self.assertIn("evaluation_verdict", items)
+        self.assertTrue(all(c["present"] for c in report["checked"]
+                            if c["item"] in ("public_bid_opening_record",
+                                             "evaluation_verdict")))
+
+    def test_meta_completeness_is_stage_aware(self):
+        early = meta_completeness(compile_folder(self.conn, self.tx))
+        self.assertNotIn("evaluation_verdict",
+                         {c["item"] for c in early["checked"]})
+
+    def test_seal_creates_event_and_immutable_row(self):
+        seal = self._seal()
+        self.assertEqual(seal["version"], 1)
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM ledger_event WHERE tx_id=? AND event_type='FOLDER_SEALED'",
+            (self.tx,)).fetchone()["c"], 1)
+        self.assertEqual(len(list_seals(self.conn, self.tx)), 1)
+
+    def test_sealing_twice_with_no_changes_is_idempotent(self):
+        first = self._seal()
+        second = self._seal()
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(len(list_seals(self.conn, self.tx)), 1)
+
+    def test_worm_requires_reason_for_a_new_version(self):
+        self._seal()
+        append_event(self.conn, self.tx, "LATE_CORRECTION", "staff-02",
+                     "BAC_SECRETARIAT", {"note": "a late document arrived"})
+        with self.assertRaises(CoreError):
+            self._seal()
+        second = self._seal(supersede_reason="late completion document received")
+        self.assertEqual(second["version"], 2)
+        self.assertEqual(second["supersedes_seal_id"], first_hash(self.conn, self.tx))
+        self.assertEqual(len(list_seals(self.conn, self.tx)), 2)
+
+    def test_verify_sealed_folder(self):
+        seal = self._seal()
+        report = verify_sealed_folder(self.conn, seal["id"])
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["folder_hash_ok"])
+        self.assertTrue(report["chain_ok"])
+        self.assertTrue(report["chain_head_matches"])
+        self.assertTrue(report["corpus_ok"])
+
+    def test_tampered_sealed_content_is_detected(self):
+        seal = self._seal()
+        self.conn.execute("DROP TRIGGER sealed_folder_no_update")
+        self.conn.execute("UPDATE sealed_folder SET content_json='{}' WHERE id=?",
+                          (seal["id"],))
+        report = verify_sealed_folder(self.conn, seal["id"])
+        self.assertFalse(report["ok"])
+        self.assertFalse(report["folder_hash_ok"])
+
+    def test_export_package_and_manifest(self):
+        seal = self._seal()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = export_package(self.conn, seal["id"], tmp)
+            self.assertTrue(os.path.exists(result["package"]))
+            self.assertTrue(os.path.exists(result["manifest"]))
+            with open(result["manifest"], encoding="utf-8") as fh:
+                self.assertIn(seal["folder_hash"], fh.read())
+            with open(result["package"], encoding="utf-8") as fh:
+                self.assertIn("transaction", json.load(fh))
+
+    def test_export_refuses_unverifiable_folder(self):
+        seal = self._seal()
+        self.conn.execute("DROP TRIGGER sealed_folder_no_update")
+        self.conn.execute("UPDATE sealed_folder SET content_json='{}' WHERE id=?",
+                          (seal["id"],))
+        with self.assertRaises(CoreError):
+            export_package(self.conn, seal["id"], tempfile.gettempdir())
+
+    def test_coa_http_routes_are_read_only(self):
+        seal = self._seal()
+        before = self.conn.execute("SELECT count(*) c FROM ledger_event").fetchone()["c"]
+        routes = ["/health", "/verify-chain", f"/verify-folder?seal_id={seal['id']}",
+                  f"/folder?seal_id={seal['id']}", "/integrity", "/list-seals",
+                  "/does-not-exist"]
+        statuses = [handle(self.conn, route)[0] for route in routes]
+        self.assertEqual(statuses, [200, 200, 200, 200, 200, 200, 404])
+        self.assertEqual(handle(self.conn, "/verify-folder")[0], 400)
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM ledger_event").fetchone()["c"], before)
+
+    def test_coa_endpoint_refuses_non_loopback_bind(self):
+        with self.assertRaises(CoreError):
+            _assert_loopback("0.0.0.0")
+        with self.assertRaises(CoreError):
+            _assert_loopback("192.168.1.10")
+        self.assertIsNone(_assert_loopback("127.0.0.1"))
+
+    def test_migration_preserves_sealed_folders(self):
+        seal = self._seal()
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "vps.db")
+            migrate(self.conn, target)
+            tconn = core._connect(target)
+            try:
+                report = verify_sealed_folder(tconn, seal["id"])
+                self.assertTrue(report["ok"])
+                self.assertEqual(len(list_seals(tconn, self.tx)), 1)
+            finally:
+                tconn.close()
+
+    def test_cli_commands_work_on_a_file_database(self):
+        seal = self._seal()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "procurement.db")
+            src = init_db(db)
+            tx2 = new_tx(src)
+            open_bids(src, tx2)
+            seal2 = seal_folder(src, tx2, "bac-secretariat-01")
+            src.close()
+            def cli(args):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    return coa_main(args)
+            self.assertEqual(cli(["verify-chain", "--db", db]), 0)
+            self.assertEqual(cli(["verify-folder", "--db", db,
+                                  "--seal-id", seal2["id"]]), 0)
+            self.assertEqual(cli(["verify-corpus", "--db", db]), 0)
+            self.assertEqual(cli(["export", "--db", db,
+                                  "--seal-id", seal2["id"],
+                                  "--out", os.path.join(tmp, "pkg")]), 0)
+
+
+def first_hash(conn, tx_id):
+    row = conn.execute(
+        "SELECT id FROM sealed_folder WHERE tx_id=? ORDER BY version LIMIT 1",
+        (tx_id,),
+    ).fetchone()
+    return row["id"]
 
 
 if __name__ == "__main__":
