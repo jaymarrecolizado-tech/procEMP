@@ -17,6 +17,10 @@ from forms import (
     render_draft, register_official_form, apply_human_edit, cross_check_fields,
     list_forms, NOT_REGISTERED, DRAFT_UNSIGNED,
 )
+from extraction import (
+    StubBackend, LocalHTTPBackend, PassthroughOCR, ExtractionError,
+    extract_and_check, validate_output, load_schema, valid_stub_response,
+)
 from core import (
     CoreError, GateBlocked, PolicyBlocked, RuleResolutionError, UnverifiedRuleError,
     canonical, init_db, suggest_regime, resolve_rules, get_rule,
@@ -456,6 +460,118 @@ class FormTests(unittest.TestCase):
                                     "CONTRACT_FORM", ["contract_amount"])
         self.assertFalse(result["ok"])
         self.assertEqual(result["mismatches"][0]["field"], "contract_amount")
+
+
+PAGES = [{"page": 1, "text": "PhilGEPS Platinum, valid until 2027-06-30"},
+         {"page": 2, "text": "Financial proposal: PHP 950,000.00"}]
+
+
+class ExtractionTests(unittest.TestCase):
+
+    def setUp(self):
+        self.conn = init_db(":memory:")
+        self.r = resolve_rules(self.conn, "2026-11-05", "RA12009_IRR")
+        self.tx = new_tx(self.conn)
+        self.checklist = sample_checklist(self.r["ruleset_version"])
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _run(self, response, **kw):
+        open_bids(self.conn, self.tx)
+        return extract_and_check(self.conn, self.tx, self.checklist, PAGES,
+                                 StubBackend(response), **kw)
+
+    def test_valid_extraction_passes_with_ocr_evidence(self):
+        verdict, result = self._run(valid_stub_response())
+        self.assertEqual(verdict["decision"], "PASS")
+        self.assertEqual(verdict["model_version"], "qwen2.5-3b-ft-procurement-v1")
+        self.assertEqual(verdict["rules_engine_version"], "rules-engine-1.0-no-llm")
+        self.assertFalse(result.violations)
+        self.assertTrue(any("page" in s for s in verdict["evidence_spans"]))
+
+    def test_low_confidence_field_abstains_not_disqualifies(self):
+        response = valid_stub_response()
+        response["documents"]["omnibus_sworn_statement"]["confidence"]["signed"] = 0.35
+        verdict, result = self._run(response)
+        self.assertEqual(verdict["decision"], "ABSTAIN")
+        self.assertIn("omnibus_sworn_statement.signed", result.uncertain_fields[0])
+        self.assertNotIn("omnibus_sworn_statement", verdict["missing_documents"])
+
+    def test_unreadable_document_abstains(self):
+        response = valid_stub_response()
+        response["documents"]["philgeps_registration"] = {"status": "UNREADABLE"}
+        verdict, _ = self._run(response)
+        self.assertEqual(verdict["decision"], "ABSTAIN")
+        self.assertNotIn("philgeps_registration", verdict["invalid_documents"])
+
+    def test_hallucinated_field_causes_abstain(self):
+        response = valid_stub_response()
+        response["documents"]["financial_proposal"]["fields"]["invented_clause"] = "free text"
+        verdict, result = self._run(response)
+        self.assertEqual(verdict["decision"], "ABSTAIN")
+        self.assertTrue(any("hallucinated fields" in v for v in result.violations))
+
+    def test_wrong_type_causes_abstain(self):
+        response = valid_stub_response()
+        response["documents"]["financial_proposal"]["fields"]["amount"] = "950000"
+        verdict, _ = self._run(response)
+        self.assertEqual(verdict["decision"], "ABSTAIN")
+
+    def test_missing_model_version_causes_abstain(self):
+        response = valid_stub_response()
+        del response["model_version"]
+        verdict, _ = self._run(response)
+        self.assertEqual(verdict["decision"], "ABSTAIN")
+
+    def test_adapter_owns_prompt_hash(self):
+        response = valid_stub_response()
+        response["prompt_hash"] = "model-supplied-value"
+        verdict, _ = self._run(response)
+        self.assertNotEqual(verdict["prompt_hash"], "model-supplied-value")
+        self.assertEqual(len(verdict["prompt_hash"]), 64)
+
+    def test_external_ai_endpoint_refused(self):
+        with self.assertRaises(CoreError):
+            LocalHTTPBackend("https://api.openai.example/extract")
+        with self.assertRaises(CoreError):
+            LocalHTTPBackend("http://192.168.1.50:8080/extract")
+        self.assertEqual(LocalHTTPBackend("http://127.0.0.1:8080/extract").url,
+                         "http://127.0.0.1:8080/extract")
+
+    def test_extraction_before_opening_blocked(self):
+        with self.assertRaises(PolicyBlocked):
+            extract_and_check(self.conn, self.tx, self.checklist, PAGES,
+                              StubBackend(valid_stub_response()))
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM verdict WHERE tx_id=?", (self.tx,)).fetchone()["c"], 0)
+
+    def test_backend_failure_produces_no_verdict(self):
+        open_bids(self.conn, self.tx)
+        def boom(pages, schema):
+            raise ExtractionError("local model server offline")
+        with self.assertRaises(ExtractionError):
+            extract_and_check(self.conn, self.tx, self.checklist, PAGES, StubBackend(boom))
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM verdict WHERE tx_id=?", (self.tx,)).fetchone()["c"], 0)
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM ledger_event WHERE tx_id=? AND event_type='EXTRACTION_FAILED'",
+            (self.tx,)).fetchone()["c"], 1)
+
+    def test_ledger_records_extraction_events(self):
+        self._run(valid_stub_response())
+        types = {r["event_type"] for r in self.conn.execute(
+            "SELECT event_type FROM ledger_event WHERE tx_id=?", (self.tx,)).fetchall()}
+        self.assertIn("OCR_COMPLETED", types)
+        self.assertIn("EXTRACTION_COMPLETED", types)
+
+    def test_schema_validation_failure_is_logged(self):
+        response = valid_stub_response()
+        response["documents"]["ghost_document"] = {"status": "OK", "fields": {}}
+        self._run(response)
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM ledger_event WHERE tx_id=? AND event_type='SCHEMA_VALIDATION_FAILED'",
+            (self.tx,)).fetchone()["c"], 1)
 
 
 if __name__ == "__main__":

@@ -35,9 +35,12 @@ def _field(doc, name):
     return True, doc[name]
 
 
-def evaluate_submission(conn, tx_id, checklist, extracted, actor_id="rules-engine"):
+def evaluate_submission(conn, tx_id, checklist, extracted, actor_id="rules-engine",
+                        evidence_map=None, extraction_meta=None):
     """checklist: BAC-approved per-transaction required-document list.
        extracted: structured fields from the OCR/extraction pipeline.
+       evidence_map: optional {field: {page, bbox, snippet}} from OCR.
+       extraction_meta: optional {model_version, prompt_hash} from the extractor.
     """
     if not checklist.get("approved_by"):
         raise CoreError("checklist must carry approved_by (a named BAC Secretariat officer)")
@@ -128,6 +131,12 @@ def evaluate_submission(conn, tx_id, checklist, extracted, actor_id="rules-engin
             else:
                 raise CoreError(f"unknown check type: {ctype}")
 
+    if evidence_map:
+        for span in spans:
+            extra = evidence_map.get(span["field"])
+            if extra:
+                span.update(extra)
+
     if abstain:
         decision, confidence = "ABSTAIN", 0.0
         notes.append("Abstained due to unextracted fields, NOT due to a model probability")
@@ -136,16 +145,18 @@ def evaluate_submission(conn, tx_id, checklist, extracted, actor_id="rules-engin
     else:
         decision, confidence = "PASS", 1.0
 
+    extraction_meta = extraction_meta or {}
     verdict = submit_verdict(conn, tx_id, {
         "status": decision, "decision": decision, "confidence": confidence,
         "missing_documents": sorted(set(missing)),
         "invalid_documents": sorted(set(invalid)),
         "notes": notes + [f"abstain_reasons: {canonical(abstain)}" if abstain else "deterministic evaluation"],
         "evidence_spans": spans, "rule_citations": citations,
-        "model_version": MODEL_VERSION,
+        "model_version": extraction_meta.get("extraction_model_version", MODEL_VERSION),
+        "rules_engine_version": MODEL_VERSION,
         "ruleset_version": tx["ruleset_version"],
         "corpus_snapshot_id": tx["corpus_snapshot_id"],
-        "prompt_hash": sha256_text("no-prompt-deterministic"),
+        "prompt_hash": extraction_meta.get("prompt_hash", sha256_text("no-prompt-deterministic")),
         "checklist_approved_by": checklist["approved_by"],
         "evaluated_at": now(),
     }, actor_id=actor_id, actor_role="RULES_ENGINE")

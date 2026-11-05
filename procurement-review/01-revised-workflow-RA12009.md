@@ -5,6 +5,7 @@
 **Supersedes:** `ai-assisted-procurement-workflow.md` (RA 9184 / 2016 IRR baseline)
 **Target deployment:** DICT Regional Office II · local workstation first, then agency VPS
 **Legal sources verified:** IRR of RA 12009 (GPPB, Feb 2025), GPPB Resolution No. 03-2025 (14 May 2025), 2016 Revised IRR of RA 9184 (legacy, via GPPB/COA references)
+**Build status (2026-11-05):** steps 1–6 implemented in `procurement-core/` (stdlib-only prototype, 45 passing tests). Steps 7–10 pending. No model weights are bundled; the Qwen2.5-3B fine-tune plugs in behind `extraction.LocalHTTPBackend`.
 
 > **Read this first.** The previous design is structurally sound but legally stale. RA 12009 took effect 13 August 2024; Section 115 of its IRR **repeals RA 9184 and Commonwealth Act No. 138**. Section 113 keeps RA 9184 in force before the IRR's effectivity and grants a **three-year transitory period from GPPB approval of the Standard Forms** (GPPB Res. 03-2025, 14 May 2025 → approximately May 2028). GPPB Res. 03-2025 also states that a subsequent issuance will clarify which law applies during the transition. Until that guidance is obtained, this design supports **both regimes** rather than guessing.
 
@@ -164,7 +165,16 @@ Also add to the timeline tracker: protest and request-for-reconsideration deadli
 
 ## 6. Model strategy
 
-- **Qwen2.5-3B fine-tune** → extraction, field classification, document-type detection **only**. Constrained JSON decoding with schema validation.
+- **Qwen2.5-3B fine-tune** → extraction, field classification, document-type detection **only**. Constrained JSON decoding with strict post-hoc schema validation. The adapter contract (`extraction.py`, `seed_extraction_schema.json`) requires typed fields, per-field confidence and page-level evidence; unknown document keys or hallucinated fields are schema violations that force `ABSTAIN`, never extra data. `LocalHTTPBackend` **refuses any non-loopback URL**, so bid data cannot leave the agency machine. The adapter — not the model — computes `prompt_hash`, so a model response cannot rewrite its own provenance.
+
+| Extraction outcome | System behaviour |
+|---|---|
+| Clean typed fields, confidence ≥ threshold | Passed to the deterministic checker → PASS / FAIL |
+| Low per-field confidence | Field omitted → checker abstains on that field |
+| Unreadable scan / OCR failure | `ABSTAIN`, routed to a human — never a disqualification |
+| Schema violation, wrong type, hallucinated field, malformed JSON | `ABSTAIN` verdict + `SCHEMA_VALIDATION_FAILED` event |
+| Model server unreachable | `EXTRACTION_FAILED` event, **no verdict produced** |
+| Extraction attempted before public bid opening | Blocked by the custody gate |
 - **Rules engine** → all presence checks, date/expiry validity, arithmetic, ranking, threshold comparisons. No LLM in this path.
 - **Drafting** → deterministic registered form templates (Standard and Recommended classified separately); LLM fills fields from approved data, never writes legal prose. A 3B model must not author BAC resolutions or contract clauses. Official form bodies must be hashed and registered by a human before a release-ready document can be produced.
 - **Verdict schema:** `status`, `missing_documents[]`, `invalid_documents[]`, `notes[]`, `evidence_spans[]`, `rule_citations[]`, `confidence`, `decision = pass | fail | ABSTAIN`, `model_version`, `ruleset_version`, `corpus_snapshot_id`.
@@ -200,18 +210,18 @@ Registries required: model version table (training snapshot, eval scores per sli
 
 ## 9. Revised build order
 
-| # | Build | Why this position |
-|---|---|---|
-| 1 | **Rules registry + event ledger + regime resolver** | Every other module needs versioned rules and an immutable log; retrofitting provenance is impossible |
-| 2 | **Numbering service** | Cheap, prevents recurring audit findings, everything depends on it (keep from original plan) |
-| 3 | **State machine with the sealed-bid custody gate** | Encodes the highest legal risk as a technical impossibility, not a policy |
-| 4 | **Document checker (extraction-only) + rules engine** | Core verdict engine; advisory, evidence-backed, abstaining |
-| 5 | **Form registry + template library (GPPB Res. 03-2025, both classifications)** | Legal text must be deterministic before any drafting assistant; official bodies hash-registered by a human |
-| 6 | **Drafting assistant (field-fill only)** | Depends on 1, 2, 5 |
-| 7 | **As-of RAG + citation verification** | Adds traceability; needs corpus versioning from 1 |
-| 8 | **Audit folder compiler** | Now a read-only view over the ledger, not a late-stage project |
-| 9 | **Monitoring dashboards** | Stage 8 / project tracker integration |
-| 10 | **Correction logging + retraining pipeline** | Last — needs real production corrections to be meaningful |
+| # | Build | Status | Why this position |
+|---|---|---|---|
+| 1 | **Rules registry + event ledger + regime resolver** | Done | Every other module needs versioned rules and an immutable log; retrofitting provenance is impossible |
+| 2 | **Numbering service** | Done | Cheap, prevents recurring audit findings, everything depends on it (keep from original plan) |
+| 3 | **State machine with the sealed-bid custody gate** | Done | Encodes the highest legal risk as a technical impossibility, not a policy |
+| 4 | **Deterministic checker + rules engine** | Done | Core verdict engine; advisory, evidence-backed, abstaining |
+| 5 | **Form registry + template library / field-fill drafting** | Done | Legal text must be deterministic; official bodies hash-registered by a human |
+| 6 | **OCR / extraction adapter (Qwen2.5-3B plug-in)** | Done | Model is a field extractor only; strict schema validation and loopback-only inference keep it inside the compliance boundary |
+| 7 | **As-of RAG + citation verification** | Next | Adds traceability; needs corpus versioning from 1 |
+| 8 | **Audit folder compiler** | Partial | `export_folder()` exists in the prototype; production COA packaging and WORM sealing remain |
+| 9 | **Monitoring dashboards** | Pending | Stage 8 / project tracker integration |
+| 10 | **Correction logging + retraining pipeline** | Pending | Last — needs real production corrections to be meaningful |
 
 ---
 

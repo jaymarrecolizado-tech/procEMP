@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "base": "Qwen2.5-3B",
+    "role": "document field extraction ONLY",
+    "note": "The model extracts typed fields and per-field confidence. It never decides compliance, never writes legal prose, and never sets a verdict. Fine-tuning teaches extraction/task behaviour only; all rules live in the rules registry.",
+    "expected_version": "qwen2.5-3b-ft-procurement-v1"
+  },
+  "confidence_threshold": 0.75,
+  "document_types": {
+    "philgeps_registration": {"present": "bool", "valid_until": "date"},
+    "omnibus_sworn_statement": {"present": "bool", "signed": "bool", "notarized": "bool"},
+    "bid_securing_declaration": {"present": "bool", "signed": "bool"},
+    "financial_proposal": {"present": "bool", "amount": "number"}
+  },
+  "output_contract": {
+    "description": "Strict JSON. Extra document keys or extra field keys are schema violations, not data to be passed through.",
+    "required_top_level": ["model_version", "documents"],
+    "per_document": {
+      "status": "OK | UNREADABLE",
+      "fields": "map of field name -> typed value",
+      "confidence": "map of field name -> 0.0-1.0",
+      "evidence": "map of field name -> {page, bbox, snippet}"
+    }
+  }
+}

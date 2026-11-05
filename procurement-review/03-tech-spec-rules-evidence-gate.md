@@ -344,6 +344,11 @@ can_transition(tx, from, to):
 | A13 | Retrieve a rule repealed before the transaction date | Chunk filtered out; verified citation unavailable → `ABSTAIN` |
 | A14 | Numbering under 100 concurrent requests | No duplicates, no gaps, every issuance logged |
 | A15 | Migrate local → VPS | Hash chain verifies on target; all A1–A14 pass again |
+| A16 | Extraction attempted before `BID_OPENING_RECORDED` | `POLICY_BLOCKED`, no extraction, no verdict |
+| A17 | Model returns a hallucinated field / wrong type / unknown document | `ABSTAIN` verdict + `SCHEMA_VALIDATION_FAILED` event, never FAIL |
+| A18 | Per-field confidence below threshold | Field omitted; checker abstains on that field; document not listed as missing |
+| A19 | Configure an external (non-loopback) model endpoint | Refused at construction; no network call made |
+| A20 | Model server unavailable | `EXTRACTION_FAILED` event and **no verdict**; verdict records adapter-computed `prompt_hash` and both model/engine versions on success |
 
 ---
 
@@ -355,5 +360,8 @@ can_transition(tx, from, to):
 | No matching ruleset for a date | `AMBIGUOUS` → legal officer queue; never default to "latest" |
 | Corpus snapshot missing/corrupt | Verdicts degrade to `ABSTAIN`; never fall back to an unpinned corpus |
 | Signature service down | Gates blocked (not bypassed); manual wet-ink fallback requires a recorded exception |
-| Model unavailable | Extraction queues; no verdict generated; no silent rule-engine guess from missing fields |
+| Model unavailable | `EXTRACTION_FAILED` event; no verdict generated; no silent rule-engine guess from missing fields |
+| Model returns malformed / hallucinated JSON | Strict schema validation fails → `ABSTAIN` verdict, human queue |
+| OCR unreadable / low-confidence field | `ABSTAIN`, never a FAIL that could disqualify a bidder |
+| Non-loopback model URL configured | Refused by the adapter before any network call |
 | Clock drift | Server time from a single NTP-synced source; `occurred_at` and `signed_at` validated against it |

@@ -94,6 +94,11 @@
 | ☐ | Human review gate before any model/corpus promotion; shadow/canary and rollback tested | Approval record + rollback drill | ML / BAC Sec |
 | ☐ | Correction logging UI captures AI said / correct answer / reason / reviewer; **second reviewer adjudicates** before an override becomes training data | Correction log + adjudication sample | BAC / ML |
 | ☐ | Drafting is deterministic template fill; a 3B model never authors legal prose | Template library + code review | Engineering |
+| ☐ | **GL** Extraction inference is loopback-only; any non-local AI endpoint is refused in code | `LocalHTTPBackend._assert_loopback` review + egress rules | IT / Engineering |
+| ☐ | **GL** Extraction output validated against a strict typed schema; unknown keys / wrong types / hallucinated fields force `ABSTAIN`, never pass through | Schema file + validation test results | ML / Engineering |
+| ☐ | Low per-field confidence and unreadable scans route to a human; an OCR failure can never produce a FAIL verdict | Abstention test results + sample verdicts | BAC / ML |
+| ☐ | Every verdict records both `extraction_model_version` and `rules_engine_version`, plus an adapter-computed `prompt_hash` | Sample verdict JSON | Engineering |
+| ☐ | Model server outage produces `EXTRACTION_FAILED` and **no verdict** | Failure-injection test result | Engineering |
 
 ## G. Local → VPS migration
 
@@ -101,7 +106,7 @@
 |---|---|---|---|
 | ☐ | Identical container images on both sites; no hardcoded paths or host-specific secrets | Compose/helm files + config diff | IT |
 | ☐ | Migration procedure: export → verify chain → import → re-verify → dual-read → cutover; ledger never rebuilt | Runbook + `MIGRATION_VERIFIED` event | IT |
-| ☐ | Full acceptance suite (A1–A15) re-run on the VPS with results archived | Test report | Engineering |
+| ☐ | Full acceptance suite (A1–A20, 45 tests) re-run on the VPS with results archived | Test report | Engineering |
 | ☐ | Cutover downtime window, rollback trigger and data-owner sign-off recorded | Cutover record | HOPE / IT |
 | ☐ | No external AI/embedding API enabled post-migration | Egress rules + config review | IT |
 

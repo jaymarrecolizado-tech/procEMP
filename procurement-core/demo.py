@@ -97,6 +97,20 @@ def main():
     print("   unreadable scan:", v3["decision"],
           "(routed to human, never a disqualification)")
 
+    from extraction import StubBackend, extract_and_check, valid_stub_response
+    pages = [{"page": 1, "text": "PhilGEPS Platinum, valid until 2027-06-30"},
+             {"page": 2, "text": "Financial proposal: PHP 950,000.00"}]
+    ev, er = extract_and_check(conn, tx, checklist, pages,
+                               StubBackend(valid_stub_response()))
+    print("8. Extraction adapter (Qwen plug-in point):", ev["decision"],
+          "| model:", ev["model_version"])
+    print("   OCR evidence spans:", sum(1 for s in ev["evidence_spans"] if "page" in s),
+          "| schema violations:", len(er.violations))
+    noisy = valid_stub_response()
+    noisy["documents"]["financial_proposal"]["fields"]["amount"] = "950000"
+    ev2, _ = extract_and_check(conn, tx, checklist, pages, StubBackend(noisy))
+    print("   model returns wrong type ->", ev2["decision"], "(abstain, not disqualify)")
+
     from forms import render_draft, list_forms
     noa = {
         "approved_by": "bac-secretariat-01",
@@ -110,19 +124,19 @@ def main():
     draft = render_draft(conn, tx, "NOTICE_OF_AWARD", noa)
     noa_class = [f["classification"] for f in list_forms(conn)
                  if f["code"] == "NOTICE_OF_AWARD"][0]
-    print("8. Deterministic drafting:", draft["status"])
+    print("9. Deterministic drafting:", draft["status"])
     print("   Notice of Award is a", noa_class, "form (NOT a Standard Form);",
           "official body not registered -> release blocked")
 
     folder = export_folder(conn, tx)
-    print("9. Audit folder:", folder["manifest"]["event_count"], "events |",
+    print("10. Audit folder:", folder["manifest"]["event_count"], "events |",
           "chain ok:", folder["manifest"]["chain_ok"], "|",
           "folder hash:", folder["manifest"]["folder_hash"][:16], "...")
 
     with tempfile.TemporaryDirectory() as tmp:
         target = os.path.join(tmp, "vps.db")
         report = migrate(conn, target, actor_id="it-admin-01")
-        print("10. Local -> VPS migration:", report["events_checked"],
+        print("11. Local -> VPS migration:", report["events_checked"],
               "events copied | chain ok:", report["ok"])
 
     print("\nDone. No external AI/embedding API was called at any point.")

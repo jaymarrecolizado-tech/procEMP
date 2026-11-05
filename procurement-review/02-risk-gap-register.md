@@ -9,6 +9,8 @@
 
 **Summary:** 3 × P0 · 14 × P1 · 10 × P2 = **27 findings**. Nine items are go-live blockers (marked **GL**).
 
+**Build status (2026-11-05):** steps 1–6 of the revised build order are implemented in `procurement-core/` with 45 passing tests (A1–A20 plus checker, forms and extraction suites). Findings R-01…R-19 have code-level controls in the prototype; they still require the human/legal sign-offs listed in the compliance checklist before any real transaction is processed.
+
 ---
 
 ## Findings
