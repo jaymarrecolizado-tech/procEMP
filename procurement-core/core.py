@@ -579,6 +579,15 @@ def submit_verdict(conn, tx_id, verdict, actor_id="checker", actor_role="MODEL")
         "corpus_snapshot_id": verdict["corpus_snapshot_id"],
         "prompt_hash": verdict["prompt_hash"],
     })
+    verdict["verdict_id"] = vid
+    if verdict["decision"] in ("ABSTAIN", "FAIL"):
+        try:
+            from review_queue import enqueue_verdict
+            enqueue_verdict(conn, tx_id, vid, created_by=actor_id)
+        except Exception:
+            # Review-queue enqueueing is advisory automation; verdict submission
+            # must still succeed.
+            pass
     return verdict
 
 
@@ -635,7 +644,8 @@ def migrate(source_conn, target_path, actor_id="it-admin") -> dict:
                   "document", "verdict", "draft", "sealed_folder",
                   "contract_terms", "milestone", "variation_order",
                   "correction", "citation_feedback", "benchmark_case",
-                  "training_batch", "model_version", "eval_run"):
+                  "training_batch", "model_version", "eval_run",
+                  "review_item", "review_action"):
         cols = [r[1] for r in source_conn.execute(f"PRAGMA table_info({table})").fetchall()]
         collist = ",".join(cols)
         rows = source_conn.execute(f"SELECT {collist} FROM {table}").fetchall()

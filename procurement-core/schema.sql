@@ -359,3 +359,32 @@ CREATE TABLE IF NOT EXISTS eval_run (
   evaluator              TEXT NOT NULL,
   run_at                 TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS review_item (
+  id               TEXT PRIMARY KEY,
+  tx_id            TEXT NOT NULL REFERENCES proc_tx(id),
+  verdict_id       TEXT NOT NULL REFERENCES verdict(id),
+  status           TEXT NOT NULL DEFAULT 'OPEN',
+  reason           TEXT NOT NULL,
+  priority         TEXT NOT NULL DEFAULT 'NORMAL',
+  assigned_to      TEXT,
+  created_at       TEXT NOT NULL,
+  created_by       TEXT NOT NULL,
+  resolved_at      TEXT,
+  resolved_by      TEXT,
+  resolution       TEXT,
+  resolution_note  TEXT,
+  UNIQUE (tx_id, verdict_id)
+);
+
+CREATE TABLE IF NOT EXISTS review_action (
+  id              TEXT PRIMARY KEY,
+  review_item_id  TEXT NOT NULL REFERENCES review_item(id),
+  tx_id           TEXT NOT NULL REFERENCES proc_tx(id),
+  action          TEXT NOT NULL,
+  actor_id        TEXT NOT NULL,
+  actor_role      TEXT NOT NULL,
+  note            TEXT,
+  payload_json    TEXT,
+  created_at      TEXT NOT NULL
+);
