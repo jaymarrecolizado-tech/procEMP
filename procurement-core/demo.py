@@ -168,11 +168,50 @@ def main():
     print("    LD estimate:", ld["amount"], "|", ld["status"])
     export_dashboard(conn, "sample-dashboard.html", "2026-11-05")
 
+    from learning import (
+        submit_correction, adjudicate_correction, register_benchmark_cases,
+        create_training_batch, register_candidate, evaluate_candidate,
+        approve_candidate, deploy_candidate, promote_canary,
+        current_production, learning_dashboard,
+    )
+    register_benchmark_cases(conn, [
+        {"case_id": f"{sl}-{i}", "slice_name": sl,
+         "input": {"document": f"historical case {i}"},
+         "expected": {"decision": "PASS"},
+         "source_ref": "anonymized historical BAC case"}
+        for sl in ("philgeps_registration", "omnibus_sworn_statement")
+        for i in range(10)
+    ], "ml-lead-01")
+    for i in range(4):
+        c = submit_correction(
+            conn, tx, verdict_id="demo-verdict", field_path=f"documents.omnibus.{i}",
+            ai_value=True, correct_value=False, reason="BAC override confirmed",
+            submitted_by="staff-01")
+        adjudicate_correction(conn, c["correction_id"], "ACCEPTED",
+                              "reviewer-01", "checked against the physical folder")
+    batch = create_training_batch(conn, created_by="ml-engineer-01",
+                                  base_training_set="original-train-v1")
+    register_candidate(conn, version="model-v1",
+                       training_batch_id=batch["batch_id"],
+                       q_lora_config={"base_training_set": "original-train-v1",
+                                      "replay_ratio": 0.3, "lora_r": 16},
+                       corpus_snapshot_id="corpus-ra12009-2025-02")
+    evl = evaluate_candidate(conn, "model-v1", {
+        "philgeps_registration": {"correct": 10, "total": 10},
+        "omnibus_sworn_statement": {"correct": 9, "total": 10},
+    }, "ci-runner-01")
+    approve_candidate(conn, "model-v1", "legal-officer-01", "approved for canary")
+    deploy_candidate(conn, "model-v1", "ml-engineer-01", strategy="canary")
+    promote_canary(conn, "model-v1", "bac-chair-01")
+    print("11. Human-gated retraining loop: eval passed:", evl["passed"],
+          "| production:", current_production(conn)["version"],
+          "| corrections:", batch["correction_count"])
+
     from audit import seal_folder, verify_sealed_folder, compile_folder
     from coa_server import handle
     seal = seal_folder(conn, tx, "bac-secretariat-01")
     coa = verify_sealed_folder(conn, seal["id"])
-    print("11. COA folder sealed (WORM): version", seal["version"],
+    print("12. COA folder sealed (WORM): version", seal["version"],
           "| verification:", coa["ok"],
           "| completeness flags:",
           len(compile_folder(conn, tx)["meta_completeness"]["flags"]))
@@ -181,14 +220,14 @@ def main():
           "|", handle(conn, "/integrity")[1]["ok"])
 
     folder = export_folder(conn, tx)
-    print("12. Audit folder:", folder["manifest"]["event_count"], "events |",
+    print("13. Audit folder:", folder["manifest"]["event_count"], "events |",
           "chain ok:", folder["manifest"]["chain_ok"], "|",
           "folder hash:", folder["manifest"]["folder_hash"][:16], "...")
 
     with tempfile.TemporaryDirectory() as tmp:
         target = os.path.join(tmp, "vps.db")
         report = migrate(conn, target, actor_id="it-admin-01")
-        print("13. Local -> VPS migration:", report["events_checked"],
+        print("14. Local -> VPS migration:", report["events_checked"],
               "events copied | chain ok:", report["ok"])
 
     print("\nDone. No external AI/embedding API was called at any point.")

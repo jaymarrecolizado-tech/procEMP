@@ -101,6 +101,14 @@
 | ☐ | Frozen evaluation benchmark with per-document-type recall targets; retrieval accuracy measured separately from generation accuracy | Benchmark manifest + latest scorecard | ML |
 | ☐ | Red-team set of near-miss/altered documents tested before each release | Test report | ML |
 | ☐ | Model version registry: training snapshot, per-slice eval scores, human approver, deployment date, rollback target | Registry export | ML |
+| ☐ | **GL** Every staff override is adjudicated by a **second reviewer** who is not the submitter before it can become training data | Correction log + test A38/A39 | BAC / ML |
+| ☐ | Frozen benchmark cases are immutable and hash-pinned; no case used for training is used for evaluation | `benchmark_snapshot_hash` + test A41 | ML |
+| ☐ | **GL** Candidate evaluation enforces **per-slice non-regression**, not just aggregate accuracy | Eval run export + test A42 | ML |
+| ☐ | **GL** No model reaches production without a passing evaluation, a named human approver, and canary sign-off by a different human | `MODEL_APPROVED` / `MODEL_PROMOTED` events + test A43/A44 | HOPE / Legal |
+| ☐ | Rollback target retained for every production model; rollback reason recorded | Model registry + test A45 | ML / IT |
+| ☐ | Training config always replays the original training set (`base_training_set`, `replay_ratio`) | QLoRA config export + test A40 | ML |
+| ☐ | Wrong/outdated citation feedback is only closed against a new approved corpus snapshot | Citation feedback log | Legal / ML |
+| ☐ | A past verdict can be traced to its exact model version, ruleset and corpus snapshot | `verdict_provenance()` sample | COA / ML |
 | ☐ | Corpus snapshot registry with human approval before activation; active transactions stay pinned | Registry export | ML |
 | ☐ | Human review gate before any model/corpus promotion; shadow/canary and rollback tested | Approval record + rollback drill | ML / BAC Sec |
 | ☐ | Correction logging UI captures AI said / correct answer / reason / reviewer; **second reviewer adjudicates** before an override becomes training data | Correction log + adjudication sample | BAC / ML |
@@ -122,7 +130,7 @@
 |---|---|---|---|
 | ☐ | Identical container images on both sites; no hardcoded paths or host-specific secrets | Compose/helm files + config diff | IT |
 | ☐ | Migration procedure: export → verify chain → import → re-verify → dual-read → cutover; ledger never rebuilt | Runbook + `MIGRATION_VERIFIED` event | IT |
-| ☐ | Full acceptance suite (A1–A37, 85 tests) re-run on the VPS with results archived | Test report | Engineering |
+| ☐ | Full acceptance suite (A1–A45, 102 tests) re-run on the VPS with results archived | Test report | Engineering |
 | ☐ | Cutover downtime window, rollback trigger and data-owner sign-off recorded | Cutover record | HOPE / IT |
 | ☐ | No external AI/embedding API enabled post-migration | Egress rules + config review | IT |
 

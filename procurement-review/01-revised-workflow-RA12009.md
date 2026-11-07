@@ -5,7 +5,7 @@
 **Supersedes:** `ai-assisted-procurement-workflow.md` (RA 9184 / 2016 IRR baseline)
 **Target deployment:** DICT Regional Office II · local workstation first, then agency VPS
 **Legal sources verified:** IRR of RA 12009 (GPPB, Feb 2025), GPPB Resolution No. 03-2025 (14 May 2025), 2016 Revised IRR of RA 9184 (legacy, via GPPB/COA references)
-**Build status (2026-11-07):** steps 1–9 implemented in `procurement-core/` (stdlib-only prototype, 85 passing tests). Step 10 pending. No model weights or embedding models are bundled; the Qwen2.5-3B fine-tune plugs in behind `extraction.LocalHTTPBackend`.
+**Build status (2026-11-07):** **all 10 build steps implemented** in `procurement-core/` (stdlib-only prototype, 102 passing tests). The build order is complete. No model weights or embedding models are bundled; the Qwen2.5-3B fine-tune plugs in behind `extraction.LocalHTTPBackend`. Remaining work is external/legal confirmation and replacing prototype stubs — see §10.
 
 > **Read this first.** The previous design is structurally sound but legally stale. RA 12009 took effect 13 August 2024; Section 115 of its IRR **repeals RA 9184 and Commonwealth Act No. 138**. Section 113 keeps RA 9184 in force before the IRR's effectivity and grants a **three-year transitory period from GPPB approval of the Standard Forms** (GPPB Res. 03-2025, 14 May 2025 → approximately May 2028). GPPB Res. 03-2025 also states that a subsequent issuance will clarify which law applies during the transition. Until that guidance is obtained, this design supports **both regimes** rather than guessing.
 
@@ -202,6 +202,8 @@ Also add to the timeline tracker: protest and request-for-reconsideration deadli
 
 Registries required: model version table (training snapshot, eval scores per slice, approver, date), corpus version table, correction log, benchmark manifest.
 
+**Implemented in `procurement-core/learning.py` (step 10):** corrections are `PENDING` until a **second reviewer** (never the submitter) adjudicates them; rejected or unadjudicated overrides can never enter a training batch. A batch requires a minimum number of accepted corrections and a `base_training_set` + `replay_ratio` in the QLoRA config, so the original data is always replayed. Benchmark cases are **frozen by DB trigger** (no UPDATE/DELETE) and hashed into a snapshot hash. `evaluate_candidate()` enforces **per-slice non-regression** against the current production model — a candidate with a higher overall score still fails if any single slice regresses; the first model must clear an absolute threshold instead. `approve_candidate()` refuses anything without a passing evaluation; `deploy_candidate()` refuses anything not APPROVED; canary promotion requires a **different human** than the deployer; `rollback()` restores the previous production version with a recorded reason. Every event is written to the ledger, and `verdict_provenance()` ties a past verdict to its exact model version, ruleset and corpus snapshot. **No step in this loop can auto-deploy.**
+
 ---
 
 ## 8. Deployment: local → VPS
@@ -227,11 +229,28 @@ Registries required: model version table (training snapshot, eval scores per sli
 | 7 | **As-of RAG + citation verification** | Done | Adds traceability; seeded with verified official passages, pinned per transaction, exact-section citation check |
 | 8 | **COA packaging, WORM sealing, read-only verification endpoint** | Done | Immutable sealed folders, meta-completeness flags, hash-chain attestation, CLI + loopback HTTP verification |
 | 9 | **Contract monitoring + dashboards** | Done | Milestones, delay/LD/variation-order flags, status reports, self-contained HTML dashboard |
-| 10 | **Correction logging + retraining pipeline** | Next | Last — needs real production corrections to be meaningful |
+| 10 | **Correction logging + human-gated retraining** | Done | Last — second-reviewer adjudication, frozen benchmark, per-slice non-regression, human approval, canary, rollback |
 
 **Contract monitoring (`procurement-core/monitoring.py`):** contract terms (amount, dates, LD rate and cap) are registered by a **named human** and only at `CONTRACT` stage or later. Milestone schedules are human-approved; milestone completion is **human-verified** with an evidence document — the AI cannot mark work complete. `compute_status()` deterministically derives progress, overdue/due-soon milestones, and alerts. A liquidated-damages figure is explicitly tagged `ADVISORY_ESTIMATE_ONLY` and computed **only from the approved contract's own rate**; if that rate is absent the system returns `NOT_CONFIGURED` and produces no number rather than guessing. Variation orders are raised as `PENDING` and can only be decided by a named approving authority who is **not the requester** (segregation of duties). `dashboard()` aggregates across contracts; `render_dashboard_html()` produces a self-contained, light-theme HTML view with no external resources. Monitoring records are included in the sealed COA folder and survive local→VPS migration.
 
 **COA packaging (`procurement-core/audit.py`, `coa_server.py`):** `compile_folder()` produces a read-only snapshot covering the transaction, every ledger event with hashes, documents and checksums, signoffs, verdicts, drafts, rule citations, corpus/model versions, the ledger-chain state it attests to, and a **stage-aware meta-completeness** check (flags are advisory, not legal findings). `seal_folder()` writes an immutable sealed row (DB triggers block UPDATE/DELETE) plus a `FOLDER_SEALED` event. Re-sealing unchanged content is idempotent; changed content requires a **new numbered version with a recorded reason**, and the old version is retained. `verify_sealed_folder()` recomputes the folder hash, replays the hash chain up to the attested sequence, and checks corpus integrity — all reads, no writes. `coa_server.py` exposes GET-only `/health`, `/verify-chain`, `/verify-folder`, `/folder`, `/integrity`, `/list-seals` on loopback, plus offline CLI commands for chain/folder verification, export and sealing. Production deployment should place an authenticated reverse proxy in front if COA needs LAN access.
+
+### 9.1 What remains before production
+
+The build order is complete; this is now a **prototype with all control paths implemented and tested**, not a deployable government system. Remaining work falls into two buckets:
+
+**External / legal confirmations (all config-level, no code rewrite):**
+- GPPB guidance on RA 9184 vs RA 12009 applicability during the transitory period, and exact legacy Annex H thresholds.
+- Whether PhilGEPS exposes a supported posting API; GPPB authorization for accomplishing Standard Forms through an online platform.
+- Official form bodies (all 36 Res. 03-2025 forms) downloaded, hashed and registered by a named human.
+- E-signature basis (PNPKI / RA 8792) or wet-ink procedure; DPIA and NPC obligations under RA 10173.
+- Agency instrument defining the system as decision support; COA and DPO briefings; staff training.
+
+**Prototype stubs to replace:**
+- SQLite → PostgreSQL; in-process ledger → WORM-backed append-only store; local HTTP stub → real Qwen2.5-3B fine-tune served on loopback; `StubEmbedding` → `bge-m3` / `multilingual-e5`.
+- Full GPPB / COA / GPPB-circular corpus replacing the 13 verified seed passages and the legacy placeholder.
+- Real benchmark cases with confirmed-correct verdicts, real correction UI, and a real QLoRA training job (the pipeline, gates and registries are already in place).
+- Production hosting of the COA endpoint behind an authenticated reverse proxy, plus backup/restore drills and a records-retention schedule.
 
 ---
 

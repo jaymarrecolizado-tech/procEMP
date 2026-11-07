@@ -366,6 +366,14 @@ can_transition(tx, from, to):
 | A35 | Compute LD with no rate in the approved contract | `NOT_CONFIGURED`, `amount=None`; with a rate, `ADVISORY_ESTIMATE_ONLY` and capped |
 | A36 | Requester tries to approve their own variation order | Refused (segregation of duties); a different named approver succeeds |
 | A37 | Export the monitoring dashboard | Self-contained HTML, no external URLs, advisory notice present |
+| A38 | Submitter tries to adjudicate their own correction | Refused; only a different second reviewer can accept it |
+| A39 | Rejected / unadjudicated corrections in the pool | Never enter a training batch; count reflects accepted only |
+| A40 | Create a training batch with fewer than N accepted corrections | Refused; batch config must include `base_training_set` and `replay_ratio` |
+| A41 | UPDATE or DELETE a frozen benchmark case | DB trigger refuses; benchmark snapshot hash unchanged |
+| A42 | Candidate with higher overall score but one regressed slice | Evaluation `passed=false` with the regressed slice named |
+| A43 | Approve a candidate with a failed evaluation / deploy an unapproved candidate | Both refused — human gate cannot be bypassed |
+| A44 | Promote a canary using the same human who deployed it | Refused; a different human must sign off |
+| A45 | Rollback to a previous production version | Restored with a recorded reason; both transitions logged; verdict provenance still resolves |
 
 ---
 

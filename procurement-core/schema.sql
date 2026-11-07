@@ -259,3 +259,103 @@ CREATE TABLE IF NOT EXISTS variation_order (
   created_at       TEXT NOT NULL,
   UNIQUE (tx_id, reference)
 );
+
+CREATE TABLE IF NOT EXISTS correction (
+  id                TEXT PRIMARY KEY,
+  tx_id             TEXT NOT NULL,
+  verdict_id        TEXT,
+  field_path        TEXT NOT NULL,
+  ai_value          TEXT NOT NULL,
+  correct_value     TEXT NOT NULL,
+  reason            TEXT NOT NULL,
+  submitted_by      TEXT NOT NULL,
+  submitted_at      TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'PENDING',
+  adjudicated_by    TEXT,
+  adjudicated_at    TEXT,
+  adjudication_note TEXT,
+  training_batch_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS citation_feedback (
+  id                   TEXT PRIMARY KEY,
+  tx_id                TEXT NOT NULL,
+  chunk_id             TEXT NOT NULL,
+  issue                TEXT NOT NULL,
+  note                 TEXT,
+  submitted_by         TEXT NOT NULL,
+  submitted_at         TEXT NOT NULL,
+  status               TEXT NOT NULL DEFAULT 'OPEN',
+  resolved_by          TEXT,
+  resolved_at          TEXT,
+  resolved_snapshot_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_case (
+  id           TEXT PRIMARY KEY,
+  case_id      TEXT NOT NULL UNIQUE,
+  slice_name   TEXT NOT NULL,
+  input_json   TEXT NOT NULL,
+  expected_json TEXT NOT NULL,
+  source_ref   TEXT NOT NULL,
+  frozen_by    TEXT NOT NULL,
+  frozen_at    TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS benchmark_no_update
+BEFORE UPDATE ON benchmark_case
+BEGIN
+  SELECT RAISE(ABORT, 'benchmark cases are frozen and immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS benchmark_no_delete
+BEFORE DELETE ON benchmark_case
+BEGIN
+  SELECT RAISE(ABORT, 'benchmark cases are frozen and immutable');
+END;
+
+CREATE TABLE IF NOT EXISTS training_batch (
+  id                    TEXT PRIMARY KEY,
+  created_at            TEXT NOT NULL,
+  created_by            TEXT NOT NULL,
+  correction_count      INTEGER NOT NULL,
+  base_training_set     TEXT NOT NULL,
+  training_snapshot_hash TEXT NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'CREATED',
+  candidate_version_id  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS model_version (
+  id                    TEXT PRIMARY KEY,
+  version               TEXT NOT NULL UNIQUE,
+  model_type            TEXT NOT NULL DEFAULT 'EXTRACTION',
+  training_batch_id     TEXT,
+  training_snapshot_hash TEXT,
+  corpus_snapshot_id    TEXT,
+  q_lora_config_json    TEXT,
+  eval_run_id           TEXT,
+  eval_score            REAL,
+  per_slice_json        TEXT,
+  status                TEXT NOT NULL DEFAULT 'CANDIDATE',
+  approver              TEXT,
+  approved_at           TEXT,
+  approval_note         TEXT,
+  deployed_at           TEXT,
+  deployed_by           TEXT,
+  rollback_target       TEXT,
+  created_at            TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS eval_run (
+  id                     TEXT PRIMARY KEY,
+  candidate_version_id   TEXT NOT NULL,
+  benchmark_snapshot_hash TEXT NOT NULL,
+  per_slice_json         TEXT NOT NULL,
+  overall_score          REAL NOT NULL,
+  production_score       REAL,
+  production_slice_json  TEXT,
+  regressions_json       TEXT NOT NULL,
+  passed                 INTEGER NOT NULL,
+  evaluator              TEXT NOT NULL,
+  run_at                 TEXT NOT NULL
+);

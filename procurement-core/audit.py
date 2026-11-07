@@ -22,6 +22,7 @@ from core import (
     sha256_text, uid, verify_chain,
 )
 from rag import verify_corpus_integrity
+from learning import benchmark_snapshot_hash, current_production
 
 FOLDER_SCHEMA_VERSION = "1.0"
 
@@ -138,6 +139,12 @@ def compile_folder(conn, tx_id, compiler_id="audit-compiler"):
             "milestones": _rows(conn, "SELECT * FROM milestone WHERE tx_id=? ORDER BY sequence", tx_id),
             "variation_orders": _rows(conn, "SELECT * FROM variation_order WHERE tx_id=? ORDER BY created_at", tx_id),
         },
+        "model_governance": {
+            "corrections": _rows(conn, "SELECT * FROM correction WHERE tx_id=? ORDER BY submitted_at", tx_id),
+            "citation_feedback": _rows(conn, "SELECT * FROM citation_feedback WHERE tx_id=? ORDER BY submitted_at", tx_id),
+            "benchmark_snapshot_hash": benchmark_snapshot_hash(conn),
+            "production_model_at_compile": (current_production(conn) or {}).get("version"),
+        },
         "rule_citations": citations,
         "corpus_chunks_used": sorted(chunk_ids),
         "model_versions": sorted(model_versions),
@@ -161,6 +168,8 @@ def compile_folder(conn, tx_id, compiler_id="audit-compiler"):
         "citation_count": len(citations),
         "monitoring_milestone_count": len(folder["contract_monitoring"]["milestones"]),
         "monitoring_vo_count": len(folder["contract_monitoring"]["variation_orders"]),
+        "correction_count": len(folder["model_governance"]["corrections"]),
+        "production_model": folder["model_governance"]["production_model_at_compile"],
         "corpus_integrity": verify_corpus_integrity(conn)["ok"],
         "meta_completeness_ok": folder["meta_completeness"]["ok"],
         "compiled_at": now(),

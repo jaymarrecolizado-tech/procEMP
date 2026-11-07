@@ -35,6 +35,13 @@ from monitoring import (
     raise_variation_order, review_variation_order, compute_status, dashboard,
     render_dashboard_html, export_dashboard,
 )
+from learning import (
+    submit_correction, adjudicate_correction, flag_citation,
+    resolve_citation_feedback, register_benchmark_cases, benchmark_snapshot_hash,
+    create_training_batch, register_candidate, evaluate_candidate,
+    approve_candidate, deploy_candidate, promote_canary, rollback,
+    current_production, learning_dashboard, verdict_provenance,
+)
 from core import (
     CoreError, GateBlocked, PolicyBlocked, RuleResolutionError, UnverifiedRuleError,
     canonical, init_db, suggest_regime, resolve_rules, get_rule,
@@ -1079,6 +1086,259 @@ class MonitoringTests(unittest.TestCase):
                 ).fetchone()["status"], "COMPLETED")
             finally:
                 tconn.close()
+
+
+BENCHMARK_CASES = [
+    {"case_id": f"{sl}-{i}", "slice_name": sl,
+     "input": {"document": f"historical case {sl} {i}"},
+     "expected": {"decision": "PASS"},
+     "source_ref": "anonymized historical BAC case"}
+    for sl in ("philgeps_registration", "omnibus_sworn_statement")
+    for i in range(10)
+]
+
+BASELINE = {"philgeps_registration": {"correct": 10, "total": 10},
+            "omnibus_sworn_statement": {"correct": 8, "total": 10}}
+REGRESSING = {"philgeps_registration": {"correct": 9, "total": 10},
+              "omnibus_sworn_statement": {"correct": 10, "total": 10}}
+IMPROVED = {"philgeps_registration": {"correct": 10, "total": 10},
+            "omnibus_sworn_statement": {"correct": 9, "total": 10}}
+FAILING = {"philgeps_registration": {"correct": 5, "total": 10},
+           "omnibus_sworn_statement": {"correct": 10, "total": 10}}
+
+
+def accepted_corrections(conn, tx, n, prefix="c"):
+    batch = []
+    for i in range(n):
+        c = submit_correction(
+            conn, tx, verdict_id="verdict-1",
+            field_path=f"{prefix}.documents.philgeps_registration.present",
+            ai_value=True, correct_value=False,
+            reason=f"staff override {i}", submitted_by="staff-01")
+        adjudicate_correction(conn, c["correction_id"], "ACCEPTED", "reviewer-01",
+                              "confirmed against the physical bid folder")
+        batch.append(c["correction_id"])
+    return batch
+
+
+class LearningTests(unittest.TestCase):
+
+    def setUp(self):
+        self.conn = init_db(":memory:")
+        self.tx = new_tx(self.conn)
+        register_benchmark_cases(self.conn, BENCHMARK_CASES, "ml-lead-01")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _batch(self, n=4):
+        accepted_corrections(self.conn, self.tx, n)
+        return create_training_batch(self.conn, created_by="ml-engineer-01",
+                                     base_training_set="original-train-v1")
+
+    def _candidate(self, version, batch_id):
+        return register_candidate(
+            self.conn, version=version, training_batch_id=batch_id,
+            q_lora_config={"base_training_set": "original-train-v1",
+                           "replay_ratio": 0.3, "lora_r": 16},
+            corpus_snapshot_id="corpus-ra12009-2025-02")
+
+    def _baseline_production(self, batch_id):
+        self._candidate("model-v1", batch_id)
+        self.assertTrue(evaluate_candidate(self.conn, "model-v1", BASELINE,
+                                           "ci-runner-01")["passed"])
+        approve_candidate(self.conn, "model-v1", "legal-officer-01", "initial model")
+        deploy_candidate(self.conn, "model-v1", "ml-engineer-01", strategy="direct")
+
+    def test_correction_submission_requires_context(self):
+        with self.assertRaises(CoreError):
+            submit_correction(self.conn, self.tx, verdict_id="v", field_path="",
+                              ai_value=True, correct_value=False, reason="why",
+                              submitted_by="staff-01")
+
+    def test_submitter_cannot_adjudicate_own_correction(self):
+        c = submit_correction(self.conn, self.tx, verdict_id="v",
+                              field_path="a.b", ai_value=1, correct_value=2,
+                              reason="override", submitted_by="staff-01")
+        with self.assertRaises(CoreError):
+            adjudicate_correction(self.conn, c["correction_id"], "ACCEPTED",
+                                  "staff-01")
+        result = adjudicate_correction(self.conn, c["correction_id"], "ACCEPTED",
+                                       "reviewer-01")
+        self.assertTrue(result["training_eligible"])
+
+    def test_rejected_corrections_never_become_training_data(self):
+        for i in range(3):
+            c = submit_correction(self.conn, self.tx, verdict_id="v",
+                                  field_path=f"reject.{i}", ai_value=1,
+                                  correct_value=2, reason="override",
+                                  submitted_by="staff-01")
+            adjudicate_correction(self.conn, c["correction_id"], "REJECTED",
+                                  "reviewer-01", "AI was actually right")
+        accepted_corrections(self.conn, self.tx, 3)
+        batch = create_training_batch(self.conn, created_by="ml-engineer-01",
+                                      base_training_set="original-train-v1")
+        self.assertEqual(batch["correction_count"], 3)
+        self.assertEqual(len(batch["examples"]), 3)
+
+    def test_batch_requires_minimum_adjudicated_corrections(self):
+        accepted_corrections(self.conn, self.tx, 2)
+        with self.assertRaises(CoreError):
+            create_training_batch(self.conn, created_by="ml-engineer-01",
+                                  base_training_set="original-train-v1")
+
+    def test_benchmark_is_frozen(self):
+        before = benchmark_snapshot_hash(self.conn)
+        with self.assertRaises(Exception):
+            self.conn.execute("UPDATE benchmark_case SET expected_json='{}' WHERE case_id='philgeps_registration-0'")
+        with self.assertRaises(Exception):
+            self.conn.execute("DELETE FROM benchmark_case WHERE case_id='philgeps_registration-0'")
+        self.assertEqual(benchmark_snapshot_hash(self.conn), before)
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM benchmark_case").fetchone()["c"], 20)
+
+    def test_benchmark_snapshot_hash_changes_when_cases_change(self):
+        before = benchmark_snapshot_hash(self.conn)
+        register_benchmark_cases(self.conn, [{
+            "case_id": "new-1", "slice_name": "financial_proposal",
+            "input": {"document": "x"}, "expected": {"decision": "PASS"},
+            "source_ref": "historical",
+        }], "ml-lead-01")
+        self.assertNotEqual(benchmark_snapshot_hash(self.conn), before)
+
+    def test_candidate_requires_replay_of_original_training_set(self):
+        batch = self._batch()
+        with self.assertRaises(CoreError):
+            register_candidate(self.conn, version="bad-v1",
+                               training_batch_id=batch["batch_id"],
+                               q_lora_config={"lora_r": 16})
+        self.assertTrue(self._candidate("model-v1", batch["batch_id"]))
+
+    def test_per_slice_regression_blocks_even_with_higher_overall(self):
+        batch = self._batch()
+        self._baseline_production(batch["batch_id"])
+        self._candidate("model-v2", batch["batch_id"])
+        result = evaluate_candidate(self.conn, "model-v2", REGRESSING, "ci-runner-01")
+        self.assertGreater(result["overall_score"], 0.90)
+        self.assertFalse(result["passed"])
+        self.assertTrue(any(r["slice"] == "philgeps_registration"
+                            for r in result["regressions"]))
+
+    def test_evaluation_passes_with_no_regression(self):
+        batch = self._batch()
+        self._baseline_production(batch["batch_id"])
+        self._candidate("model-v2", batch["batch_id"])
+        result = evaluate_candidate(self.conn, "model-v2", IMPROVED, "ci-runner-01")
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["regressions"], [])
+
+    def test_human_gate_cannot_be_bypassed(self):
+        batch = self._batch()
+        self._candidate("model-v1", batch["batch_id"])
+        failed = evaluate_candidate(self.conn, "model-v1", FAILING, "ci-runner-01")
+        self.assertFalse(failed["passed"])
+        with self.assertRaises(CoreError):
+            approve_candidate(self.conn, "model-v1", "legal-officer-01")
+        with self.assertRaises(CoreError):
+            deploy_candidate(self.conn, "model-v1", "ml-engineer-01")
+
+    def test_deploy_requires_approval(self):
+        batch = self._batch()
+        self._candidate("model-v1", batch["batch_id"])
+        self.assertTrue(evaluate_candidate(self.conn, "model-v1", BASELINE,
+                                           "ci-runner-01")["passed"])
+        with self.assertRaises(CoreError):
+            deploy_candidate(self.conn, "model-v1", "ml-engineer-01")
+
+    def test_canary_promotion_requires_a_different_human(self):
+        batch = self._batch()
+        self._candidate("model-v1", batch["batch_id"])
+        evaluate_candidate(self.conn, "model-v1", BASELINE, "ci-runner-01")
+        approve_candidate(self.conn, "model-v1", "legal-officer-01")
+        deploy_candidate(self.conn, "model-v1", "ml-engineer-01", strategy="canary")
+        self.assertIsNone(current_production(self.conn))
+        with self.assertRaises(CoreError):
+            promote_canary(self.conn, "model-v1", "ml-engineer-01")
+        result = promote_canary(self.conn, "model-v1", "bac-chair-01")
+        self.assertEqual(result["status"], "PRODUCTION")
+        self.assertEqual(current_production(self.conn)["version"], "model-v1")
+
+    def test_rollback_restores_the_previous_model(self):
+        batch = self._batch()
+        self._baseline_production(batch["batch_id"])
+        self._candidate("model-v2", batch["batch_id"])
+        evaluate_candidate(self.conn, "model-v2", IMPROVED, "ci-runner-01")
+        approve_candidate(self.conn, "model-v2", "legal-officer-01")
+        deploy_candidate(self.conn, "model-v2", "ml-engineer-01", strategy="direct")
+        self.assertEqual(current_production(self.conn)["version"], "model-v2")
+        result = rollback(self.conn, "model-v1", "ml-engineer-01",
+                          "false-positive rate increased in production")
+        self.assertEqual(result["production"], "model-v1")
+        self.assertEqual(current_production(self.conn)["version"], "model-v1")
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM ledger_event WHERE event_type='MODEL_ROLLED_BACK'"
+        ).fetchone()["c"], 1)
+
+    def test_citation_feedback_requires_a_real_new_corpus_snapshot(self):
+        f = flag_citation(self.conn, self.tx, chunk_id="RA12009-IRR-S34-1",
+                          issue="OUTDATED", note="GPPB raised the threshold",
+                          submitted_by="staff-01")
+        with self.assertRaises(CoreError):
+            resolve_citation_feedback(self.conn, f["feedback_id"],
+                                      "legal-officer-01", "does-not-exist")
+        result = resolve_citation_feedback(self.conn, f["feedback_id"],
+                                           "legal-officer-01",
+                                           "corpus-ra12009-2025-02")
+        self.assertEqual(result["status"], "RESOLVED")
+
+    def test_learning_dashboard_and_provenance(self):
+        batch = self._batch()
+        self._baseline_production(batch["batch_id"])
+        submit_verdict(self.conn, self.tx, sample_verdict(
+            resolve_rules(self.conn, "2026-11-05", "RA12009_IRR")))
+        prov = verdict_provenance(self.conn, self.tx)
+        self.assertTrue(prov["verdicts"])
+        self.assertEqual(prov["current_production_model"], "model-v1")
+        self.assertIn("corpus_snapshot_id", prov["verdicts"][0])
+        board = learning_dashboard(self.conn)
+        self.assertEqual(board["benchmark_cases"], 20)
+        self.assertEqual(board["current_production"], "model-v1")
+        self.assertTrue(board["human_gate_required"])
+
+    def test_learning_tables_survive_migration(self):
+        batch = self._batch()
+        self._baseline_production(batch["batch_id"])
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "vps.db")
+            migrate(self.conn, target)
+            tconn = core._connect(target)
+            try:
+                self.assertEqual(tconn.execute(
+                    "SELECT count(*) c FROM benchmark_case").fetchone()["c"], 20)
+                self.assertEqual(tconn.execute(
+                    "SELECT count(*) c FROM correction").fetchone()["c"], 4)
+                self.assertEqual(tconn.execute(
+                    "SELECT version FROM model_version WHERE status='PRODUCTION'"
+                ).fetchone()["version"], "model-v1")
+            finally:
+                tconn.close()
+
+    def test_full_loop_end_to_end(self):
+        batch = self._batch()
+        self._candidate("model-v1", batch["batch_id"])
+        evaluation = evaluate_candidate(self.conn, "model-v1", BASELINE, "ci-runner-01")
+        self.assertTrue(evaluation["passed"])
+        approve_candidate(self.conn, "model-v1", "legal-officer-01", "approved for canary")
+        deploy_candidate(self.conn, "model-v1", "ml-engineer-01", strategy="canary")
+        promote_canary(self.conn, "model-v1", "bac-chair-01")
+        self.assertEqual(current_production(self.conn)["version"], "model-v1")
+        types = {r["event_type"] for r in self.conn.execute(
+            "SELECT event_type FROM ledger_event")}
+        for expected in ("CORRECTION_SUBMITTED", "CORRECTION_ADJUDICATED",
+                         "TRAINING_BATCH_CREATED", "CANDIDATE_MODEL_REGISTERED",
+                         "CANDIDATE_EVALUATED", "MODEL_APPROVED",
+                         "MODEL_DEPLOYED", "MODEL_PROMOTED"):
+            self.assertIn(expected, types)
 
 
 if __name__ == "__main__":
