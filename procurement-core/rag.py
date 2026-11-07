@@ -13,6 +13,7 @@ not superseded, is in force on the posting date, and its passage hash is intact.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from collections import Counter
@@ -34,7 +35,12 @@ def tokenize(text):
 
 
 def _section_numbers(text):
-    return set(re.findall(r"\b\d+(?:\.\d+)+\b", str(text)))
+    """Capture both dotted sections (59.1, 50.3.1) and integer ones (Sec. 115)."""
+    text = str(text)
+    found = set(re.findall(r"\b\d+(?:\.\d+)+\b", text))
+    for match in re.findall(r"\bsec\.?\s*(\d+(?:\.\d+)*)\b", text, flags=re.I):
+        found.add(match)
+    return found
 
 
 def _cosine(a, b):
@@ -58,9 +64,12 @@ class StubEmbedding(EmbeddingBackend):
         self.dim = dim
 
     def embed(self, text):
+        # Stable across processes. Python's built-in hash() is randomized per
+        # interpreter, which would make dense scores non-reproducible at audit.
         vec = [0.0] * self.dim
         for token in tokenize(text):
-            vec[hash(token) % self.dim] += 1.0
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            vec[int.from_bytes(digest[:8], "big") % self.dim] += 1.0
         norm = math.sqrt(sum(v * v for v in vec)) or 1.0
         return [v / norm for v in vec]
 

@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -50,6 +51,7 @@ from core import (
     export_folder, verify_chain, migrate, issue_number, sha256_text, append_event,
 )
 
+PROC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 H1 = sha256_text("minutes-v1")
 H2 = sha256_text("draft-v1")
 H3 = sha256_text("draft-v2")
@@ -272,6 +274,40 @@ class AcceptanceTests(unittest.TestCase):
                 target_conn.execute("SELECT ruleset_version FROM proc_tx WHERE id=?", (tx,))
                 .fetchone()["ruleset_version"], self.r["ruleset_version"])
             target_conn.close()
+
+    # regression - chain head must be read inside the write transaction
+    def test_concurrent_event_appends_keep_one_valid_chain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "concurrent.db")
+            init_db(db).close()
+            errors = []
+
+            def worker(i):
+                try:
+                    c = core._connect(db)
+                    append_event(c, "SYSTEM", "CONCURRENT_TEST", f"worker-{i}",
+                                 "TEST", {"i": i})
+                    c.close()
+                except Exception as exc:
+                    errors.append(str(exc))
+
+            threads = [threading.Thread(target=worker, args=(i,)) for i in range(20)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            self.assertEqual(errors, [])
+            conn = core._connect(db)
+            try:
+                report = verify_chain(conn)
+                self.assertTrue(report["ok"], report["errors"])
+                self.assertEqual(report["events_checked"], 20)
+                heads = conn.execute(
+                    "SELECT prev_hash, count(*) c FROM ledger_event GROUP BY prev_hash HAVING c > 1"
+                ).fetchall()
+                self.assertEqual(heads, [], "two events chained off the same head")
+            finally:
+                conn.close()
 
     # extra - e-bid passwords are rejected outright
     def test_password_never_stored(self):
@@ -732,6 +768,25 @@ class RAGTests(unittest.TestCase):
         hits = rag.retrieve("confidentiality of submitted bids", self.tx, top_k=2)
         self.assertTrue(hits)
         self.assertEqual(hits[0]["section"], "58.5")
+
+    def test_integer_section_citation_resolves(self):
+        citation = self.rag.resolve_citation("IRR RA 12009 Sec. 115", self.tx)
+        self.assertTrue(citation["verified"])
+        self.assertEqual(citation["chunk_id"], "RA12009-IRR-S115")
+
+    def test_stub_embedding_is_stable_across_processes(self):
+        code = (
+            "import sys; sys.path.insert(0, r'" + PROC_DIR + "');"
+            "from rag import StubEmbedding;"
+            "print(','.join(format(v, '.8f') for v in "
+            "StubEmbedding().embed('confidentiality of submitted bids')))"
+        )
+        def run(seed):
+            env = dict(os.environ)
+            env["PYTHONHASHSEED"] = str(seed)
+            return subprocess.check_output(
+                [sys.executable, "-c", code], env=env, text=True).strip()
+        self.assertEqual(run(1), run(997))
 
 
 class AuditTests(unittest.TestCase):
@@ -1269,7 +1324,10 @@ class LearningTests(unittest.TestCase):
         self._candidate("model-v2", batch["batch_id"])
         evaluate_candidate(self.conn, "model-v2", IMPROVED, "ci-runner-01")
         approve_candidate(self.conn, "model-v2", "legal-officer-01")
-        deploy_candidate(self.conn, "model-v2", "ml-engineer-01", strategy="direct")
+        with self.assertRaises(CoreError):
+            deploy_candidate(self.conn, "model-v2", "ml-engineer-01", strategy="direct")
+        deploy_candidate(self.conn, "model-v2", "ml-engineer-01", strategy="canary")
+        promote_canary(self.conn, "model-v2", "bac-chair-01")
         self.assertEqual(current_production(self.conn)["version"], "model-v2")
         result = rollback(self.conn, "model-v1", "ml-engineer-01",
                           "false-positive rate increased in production")

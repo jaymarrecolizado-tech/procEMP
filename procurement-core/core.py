@@ -186,15 +186,19 @@ def append_event(conn, tx_id, event_type, actor_id, actor_role, payload,
     ).fetchone()
     if existing:
         return dict(existing)
-    prev = conn.execute(
-        "SELECT seq, row_hash FROM ledger_event ORDER BY seq DESC LIMIT 1"
-    ).fetchone()
-    prev_hash = prev["row_hash"] if prev else GENESIS_HASH
-    occurred_at = now()
     payload_text = canonical(payload)
-    row_hash = sha256_text("|".join([prev_hash, event_id, occurred_at, actor_id, payload_text]))
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # The chain head MUST be read inside the write transaction. Reading it
+        # earlier lets two concurrent writers both chain off the same row and
+        # fork the ledger, which silently destroys the COA audit trail.
+        prev = conn.execute(
+            "SELECT seq, row_hash FROM ledger_event ORDER BY seq DESC LIMIT 1"
+        ).fetchone()
+        prev_hash = prev["row_hash"] if prev else GENESIS_HASH
+        occurred_at = now()
+        row_hash = sha256_text("|".join(
+            [prev_hash, event_id, occurred_at, actor_id, payload_text]))
         cur = conn.execute(
             "INSERT INTO ledger_event "
             "(event_id, tx_id, event_type, actor_id, actor_role, payload, "

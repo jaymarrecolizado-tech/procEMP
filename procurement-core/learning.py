@@ -360,8 +360,15 @@ def deploy_candidate(conn, version, deployed_by, strategy="canary"):
     candidate = _row(conn, "SELECT * FROM model_version WHERE version=?", (version,))
     if not candidate or candidate["status"] != "APPROVED":
         raise CoreError("only an APPROVED candidate can be deployed")
+    production = current_production(conn)
+    if strategy == "direct" and production is not None:
+        raise CoreError(
+            "direct deployment is only allowed to bootstrap the FIRST production "
+            "model; use strategy='canary' then promote_canary() so a different "
+            "human signs off before replacing a live model"
+        )
     status = "CANARY" if strategy == "canary" else "PRODUCTION"
-    old = current_production(conn) if strategy == "direct" else None
+    old = production if strategy == "direct" else None
     if old:
         conn.execute("UPDATE model_version SET status='ROLLED_BACK' WHERE id=?", (old["id"],))
     conn.execute(
