@@ -167,7 +167,6 @@ def render_item(conn, item_id, message=None, error=None, auth_token=None):
       <details open><summary>Notes</summary><pre>{esc(canonical(v.get('notes', [])))}</pre></details>
       <details open><summary>Rule citations</summary><pre>{esc(canonical(v.get('rule_citations', [])))}</pre></details>
       <details><summary>Full verdict payload</summary><pre>{esc(canonical(v))}</pre></details>
-      <details><summary>Full verdict payload</summary><pre>{esc(canonical(v))}</pre></details>
       <h3>Recorded actions</h3><ul>{actions_html}</ul>
     </section>
     <div class="grid">
