@@ -135,11 +135,44 @@ def main():
     print("   Notice of Award is a", noa_class, "form (NOT a Standard Form);",
           "official body not registered -> release blocked")
 
+    from monitoring import (
+        register_contract, register_milestones, record_milestone_completion,
+        raise_variation_order, dashboard, export_dashboard,
+    )
+    impl = create_transaction(
+        conn, regime="RA12009_IRR", posting_date="2026-11-05",
+        mode="Competitive Bidding", award_criterion="LCRB",
+        drafter_id="staff-01",
+        legal_basis_note="Legal officer memo: RA 12009 applies",
+        stage="CONTRACT")
+    register_contract(conn, impl, contract_amount=1_000_000,
+                      start_date="2026-01-01", completion_date="2026-03-01",
+                      approved_by="hope-01", ld_rate_per_day=0.001,
+                      ld_cap_ratio=0.10)
+    ms = register_milestones(conn, impl, [
+        {"name": "Delivery of units", "due_date": "2026-02-01", "amount": 600000},
+        {"name": "Installation", "due_date": "2026-11-05", "amount": 300000},
+        {"name": "Training", "due_date": "2026-11-20", "amount": 100000},
+    ], approved_by="project-manager-01")
+    record_milestone_completion(conn, ms[0], "2026-02-10", "doc-evidence-1",
+                                "inspector-01")
+    raise_variation_order(conn, impl, reference="VO-001",
+                          description="Additional units", reason="Scope change",
+                          requested_by="project-manager-01",
+                          requested_amount=50000)
+    board = dashboard(conn, "2026-11-05")
+    print("10. Monitoring dashboard:", board["contracts_tracked"], "contract(s) |",
+          "critical alerts:", board["alerts_by_severity"]["critical"],
+          "| open VOs:", board["open_variation_orders"])
+    ld = board["contracts"][0]["liquidated_damages"]
+    print("    LD estimate:", ld["amount"], "|", ld["status"])
+    export_dashboard(conn, "sample-dashboard.html", "2026-11-05")
+
     from audit import seal_folder, verify_sealed_folder, compile_folder
     from coa_server import handle
     seal = seal_folder(conn, tx, "bac-secretariat-01")
     coa = verify_sealed_folder(conn, seal["id"])
-    print("10. COA folder sealed (WORM): version", seal["version"],
+    print("11. COA folder sealed (WORM): version", seal["version"],
           "| verification:", coa["ok"],
           "| completeness flags:",
           len(compile_folder(conn, tx)["meta_completeness"]["flags"]))
@@ -148,14 +181,14 @@ def main():
           "|", handle(conn, "/integrity")[1]["ok"])
 
     folder = export_folder(conn, tx)
-    print("11. Audit folder:", folder["manifest"]["event_count"], "events |",
+    print("12. Audit folder:", folder["manifest"]["event_count"], "events |",
           "chain ok:", folder["manifest"]["chain_ok"], "|",
           "folder hash:", folder["manifest"]["folder_hash"][:16], "...")
 
     with tempfile.TemporaryDirectory() as tmp:
         target = os.path.join(tmp, "vps.db")
         report = migrate(conn, target, actor_id="it-admin-01")
-        print("12. Local -> VPS migration:", report["events_checked"],
+        print("13. Local -> VPS migration:", report["events_checked"],
               "events copied | chain ok:", report["ok"])
 
     print("\nDone. No external AI/embedding API was called at any point.")

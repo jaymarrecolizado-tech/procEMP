@@ -30,6 +30,15 @@ def _event_types(folder):
     return {e["event_type"] for e in folder["events"]}
 
 
+def _row_or_none(conn, sql, tx_id):
+    row = conn.execute(sql, (tx_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def _rows(conn, sql, tx_id):
+    return [dict(r) for r in conn.execute(sql, (tx_id,)).fetchall()]
+
+
 def meta_completeness(folder):
     """Structural completeness flags across the lifecycle — advisory only.
     A flag means 'check this', NOT a legal finding of non-compliance."""
@@ -64,6 +73,18 @@ def meta_completeness(folder):
     expect("COMPLETION", "completion_documents",
            any(d["artifact_class"] == "COMPLETION_DOCUMENT"
                for d in folder["documents"]))
+    monitoring = folder.get("contract_monitoring") or {}
+    expect("IMPLEMENTATION", "approved_contract_terms",
+           bool(monitoring.get("terms")))
+    expect("IMPLEMENTATION", "milestone_schedule",
+           len(monitoring.get("milestones") or []) > 0)
+    expect("COMPLETION", "all_milestones_verified",
+           bool(monitoring.get("milestones")) and all(
+               m["status"] in ("COMPLETED", "DELAYED")
+               for m in monitoring["milestones"]))
+    expect("COMPLETION", "variation_orders_reviewed",
+           all(v["status"] in ("APPROVED", "REJECTED")
+               for v in (monitoring.get("variation_orders") or [])))
     flags = [c for c in checks if not c["present"]]
     return {"ok": not flags, "flags": flags, "checked": checks,
             "note": "structural check only; not a legal determination"}
@@ -112,6 +133,11 @@ def compile_folder(conn, tx_id, compiler_id="audit-compiler"):
         "signoffs": base["signoffs"],
         "verdicts": base["verdicts"],
         "drafts": base["drafts"],
+        "contract_monitoring": {
+            "terms": _row_or_none(conn, "SELECT * FROM contract_terms WHERE tx_id=?", tx_id),
+            "milestones": _rows(conn, "SELECT * FROM milestone WHERE tx_id=? ORDER BY sequence", tx_id),
+            "variation_orders": _rows(conn, "SELECT * FROM variation_order WHERE tx_id=? ORDER BY created_at", tx_id),
+        },
         "rule_citations": citations,
         "corpus_chunks_used": sorted(chunk_ids),
         "model_versions": sorted(model_versions),
@@ -133,6 +159,8 @@ def compile_folder(conn, tx_id, compiler_id="audit-compiler"):
         "verdict_count": len(base["verdicts"]),
         "draft_count": len(base["drafts"]),
         "citation_count": len(citations),
+        "monitoring_milestone_count": len(folder["contract_monitoring"]["milestones"]),
+        "monitoring_vo_count": len(folder["contract_monitoring"]["variation_orders"]),
         "corpus_integrity": verify_corpus_integrity(conn)["ok"],
         "meta_completeness_ok": folder["meta_completeness"]["ok"],
         "compiled_at": now(),

@@ -360,6 +360,12 @@ can_transition(tx, from, to):
 | A29 | Alter sealed `content_json` directly | Verification fails `folder_hash_ok`; export refuses to write a package |
 | A30 | Query all COA HTTP GET routes | Correct status codes, and the ledger event count is unchanged (read-only); non-loopback bind is refused |
 | A31 | Migrate local → VPS with sealed folders present | Sealed rows copied, verification still passes on the target |
+| A32 | Register contract terms before `CONTRACT` stage or without a named approver | Refused; existing terms unchanged |
+| A33 | Mark a milestone complete without a named verifier | Refused; AI cannot certify delivery |
+| A34 | Late milestone completion | `DELAYED` + `DELAY_FLAGGED` event, `days_late` recorded, no automatic determination |
+| A35 | Compute LD with no rate in the approved contract | `NOT_CONFIGURED`, `amount=None`; with a rate, `ADVISORY_ESTIMATE_ONLY` and capped |
+| A36 | Requester tries to approve their own variation order | Refused (segregation of duties); a different named approver succeeds |
+| A37 | Export the monitoring dashboard | Self-contained HTML, no external URLs, advisory notice present |
 
 ---
 

@@ -219,3 +219,43 @@ BEFORE DELETE ON sealed_folder
 BEGIN
   SELECT RAISE(ABORT, 'sealed folders are immutable');
 END;
+
+CREATE TABLE IF NOT EXISTS contract_terms (
+  tx_id            TEXT PRIMARY KEY REFERENCES proc_tx(id),
+  contract_amount  REAL NOT NULL,
+  start_date       TEXT NOT NULL,
+  completion_date  TEXT NOT NULL,
+  ld_rate_per_day  REAL,
+  ld_cap_ratio     REAL,
+  approved_by      TEXT NOT NULL,
+  approved_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS milestone (
+  id              TEXT PRIMARY KEY,
+  tx_id           TEXT NOT NULL REFERENCES proc_tx(id),
+  sequence        INTEGER NOT NULL,
+  name            TEXT NOT NULL,
+  due_date        TEXT NOT NULL,
+  amount          REAL,
+  status          TEXT NOT NULL DEFAULT 'PENDING',
+  completed_at    TEXT,
+  evidence_doc_id TEXT,
+  verified_by     TEXT,
+  UNIQUE (tx_id, sequence)
+);
+
+CREATE TABLE IF NOT EXISTS variation_order (
+  id               TEXT PRIMARY KEY,
+  tx_id            TEXT NOT NULL REFERENCES proc_tx(id),
+  reference        TEXT NOT NULL,
+  description      TEXT NOT NULL,
+  requested_amount REAL,
+  reason           TEXT NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'DRAFT',
+  requested_by     TEXT NOT NULL,
+  reviewed_by      TEXT,
+  reviewed_at      TEXT,
+  created_at       TEXT NOT NULL,
+  UNIQUE (tx_id, reference)
+);

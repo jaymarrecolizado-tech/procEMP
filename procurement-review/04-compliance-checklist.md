@@ -67,6 +67,12 @@
 | ☐ | COA verification endpoint is GET-only, read-only, loopback-bound; LAN access goes through an authenticated reverse proxy | Endpoint config + test A30 | IT |
 | ☐ | Exported COA package (`package.json` + `MANIFEST.sha256`) is only produced after verification passes | Sample package + refusal test | BAC Sec |
 | ☐ | Sealed folders survive local → VPS migration with verification still passing | Migration test A31 | IT |
+| ☐ | Contract terms and milestone schedules are registered by named humans at CONTRACT stage or later | `CONTRACT_TERMS_REGISTERED` / `MILESTONES_REGISTERED` events + test A32 | Project manager / HOPE |
+| ☐ | Milestone completion is human-verified with an evidence document; AI cannot certify delivery | `MILESTONE_COMPLETED` events + test A33 | Inspector / PM |
+| ☐ | Delays are flagged only — no automatic liquidated-damages determination; LD rate missing produces no estimate | Sample `compute_status` output + test A34/A35 | PM / Legal |
+| ☐ | Variation orders require a named approving authority other than the requester | `VARIATION_ORDER_REVIEWED` events + test A36 | HOPE |
+| ☐ | Monitoring dashboard is generated locally with no external resources and an explicit advisory notice | Sample HTML + test A37 | IT / PM |
+| ☐ | Monitoring records appear in the sealed COA folder and survive migration | Sample COA folder + migration test | BAC Sec / IT |
 | ☐ | Numbering service: atomic per type/unit/year, gap-free, void-with-reason (a documented void is not a finding) | Numbering log + void records | BAC Sec |
 | ☐ | Records retention aligned with COA/NAP schedule; backups encrypted; restore drill documented and passed | Retention policy + drill report | IT |
 | ☐ | Existing paper/legacy records: defined cutover rule for what gets digitized and how authenticity is certified | Migration procedure | BAC Sec |
@@ -116,7 +122,7 @@
 |---|---|---|---|
 | ☐ | Identical container images on both sites; no hardcoded paths or host-specific secrets | Compose/helm files + config diff | IT |
 | ☐ | Migration procedure: export → verify chain → import → re-verify → dual-read → cutover; ledger never rebuilt | Runbook + `MIGRATION_VERIFIED` event | IT |
-| ☐ | Full acceptance suite (A1–A31, 72 tests) re-run on the VPS with results archived | Test report | Engineering |
+| ☐ | Full acceptance suite (A1–A37, 85 tests) re-run on the VPS with results archived | Test report | Engineering |
 | ☐ | Cutover downtime window, rollback trigger and data-owner sign-off recorded | Cutover record | HOPE / IT |
 | ☐ | No external AI/embedding API enabled post-migration | Egress rules + config review | IT |
 

@@ -30,6 +30,11 @@ from audit import (
     list_seals, meta_completeness,
 )
 from coa_server import handle, _assert_loopback, main as coa_main
+from monitoring import (
+    register_contract, register_milestones, record_milestone_completion,
+    raise_variation_order, review_variation_order, compute_status, dashboard,
+    render_dashboard_html, export_dashboard,
+)
 from core import (
     CoreError, GateBlocked, PolicyBlocked, RuleResolutionError, UnverifiedRuleError,
     canonical, init_db, suggest_regime, resolve_rules, get_rule,
@@ -893,6 +898,187 @@ def first_hash(conn, tx_id):
         (tx_id,),
     ).fetchone()
     return row["id"]
+
+
+AS_OF = "2026-11-05"
+
+
+def contract_tx(conn, **kw):
+    params = dict(regime="RA12009_IRR", posting_date="2026-11-05",
+                  mode="Competitive Bidding", award_criterion="LCRB",
+                  drafter_id="staff-01",
+                  legal_basis_note="Legal officer memo: RA 12009 applies",
+                  stage="CONTRACT")
+    params.update(kw)
+    return create_transaction(conn, **params)
+
+
+def seeded_contract(conn, **term_kw):
+    tx = contract_tx(conn)
+    register_contract(conn, tx, contract_amount=1_000_000,
+                      start_date="2026-01-01", completion_date="2026-03-01",
+                      approved_by="hope-01", **term_kw)
+    ids = register_milestones(conn, tx, [
+        {"name": "Delivery of units", "due_date": "2026-02-01", "amount": 600000},
+        {"name": "Installation", "due_date": AS_OF, "amount": 300000},
+        {"name": "Training", "due_date": "2026-11-20", "amount": 100000},
+    ], approved_by="project-manager-01")
+    return tx, ids
+
+
+class MonitoringTests(unittest.TestCase):
+
+    def setUp(self):
+        self.conn = init_db(":memory:")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_contract_registration_requires_stage_and_human(self):
+        early = new_tx(self.conn)
+        with self.assertRaises(CoreError):
+            register_contract(self.conn, early, contract_amount=1000,
+                              start_date="2026-01-01", completion_date="2026-02-01",
+                              approved_by="hope-01")
+        tx = contract_tx(self.conn)
+        with self.assertRaises(CoreError):
+            register_contract(self.conn, tx, contract_amount=1000,
+                              start_date="2026-01-01", completion_date="2026-02-01",
+                              approved_by="")
+        self.assertTrue(register_contract(
+            self.conn, tx, contract_amount=1000, start_date="2026-01-01",
+            completion_date="2026-02-01", approved_by="hope-01"))
+
+    def test_ld_not_configured_fails_closed(self):
+        tx, _ = seeded_contract(self.conn)
+        status = compute_status(self.conn, tx, AS_OF)
+        ld = status["liquidated_damages"]
+        self.assertEqual(ld["status"], "NOT_CONFIGURED")
+        self.assertIsNone(ld["amount"])
+        self.assertIn("LD_RATE_NOT_CONFIGURED", [a["code"] for a in status["alerts"]])
+
+    def test_ld_estimate_is_advisory_and_capped(self):
+        tx = contract_tx(self.conn)
+        register_contract(self.conn, tx, contract_amount=1_000_000,
+                          start_date="2026-01-01", completion_date="2026-03-01",
+                          approved_by="hope-01", ld_rate_per_day=0.001,
+                          ld_cap_ratio=0.10)
+        register_milestones(self.conn, tx, [
+            {"name": "Delivery", "due_date": "2026-02-01", "amount": 1_000_000},
+        ], approved_by="project-manager-01")
+        ld = compute_status(self.conn, tx, AS_OF)["liquidated_damages"]
+        self.assertEqual(ld["status"], "ADVISORY_ESTIMATE_ONLY")
+        self.assertEqual(ld["amount"], 100000.0)
+        self.assertIn("NOT a determination", ld["note"])
+
+    def test_late_completion_flags_delay_for_humans(self):
+        tx, ids = seeded_contract(self.conn)
+        result = record_milestone_completion(
+            self.conn, ids[0], "2026-02-10", "doc-evidence-1", "inspector-01")
+        self.assertEqual(result["status"], "DELAYED")
+        self.assertEqual(result["days_late"], 9)
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) c FROM ledger_event WHERE tx_id=? AND event_type='DELAY_FLAGGED'",
+            (tx,)).fetchone()["c"], 1)
+
+    def test_milestone_completion_requires_human_verification(self):
+        _, ids = seeded_contract(self.conn)
+        with self.assertRaises(CoreError):
+            record_milestone_completion(self.conn, ids[0], "2026-02-01",
+                                        "doc-1", "")
+
+    def test_percent_complete_and_overdue_alerts(self):
+        tx, ids = seeded_contract(self.conn)
+        record_milestone_completion(self.conn, ids[1], AS_OF, "doc-2", "inspector-01")
+        status = compute_status(self.conn, tx, AS_OF)
+        self.assertEqual(status["milestones_done"], 1)
+        self.assertEqual(status["percent_complete_count"], 33.3)
+        self.assertEqual(status["percent_complete_amount"], 30.0)
+        self.assertIn("Delivery of units", status["overdue_milestones"])
+        codes = [a["code"] for a in status["alerts"]]
+        self.assertIn("MILESTONE_OVERDUE", codes)
+        self.assertIn("CONTRACT_OVERRUN", codes)
+        self.assertEqual(status["decision_authority"],
+                         "project manager / TWG / HOPE — AI flags only")
+
+    def test_variation_order_cannot_be_self_approved(self):
+        tx, _ = seeded_contract(self.conn)
+        vo = raise_variation_order(self.conn, tx, reference="VO-001",
+                                   description="Additional units",
+                                   reason="Scope change approved by end-user",
+                                   requested_by="project-manager-01",
+                                   requested_amount=50000)
+        self.assertEqual(vo["status"], "PENDING")
+        with self.assertRaises(CoreError):
+            review_variation_order(self.conn, vo["vo_id"], "APPROVED",
+                                   "project-manager-01")
+
+    def test_variation_order_reviewed_by_a_different_human(self):
+        tx, _ = seeded_contract(self.conn)
+        vo = raise_variation_order(self.conn, tx, reference="VO-001",
+                                   description="Additional units",
+                                   reason="Scope change",
+                                   requested_by="project-manager-01")
+        result = review_variation_order(self.conn, vo["vo_id"], "APPROVED", "hope-01")
+        self.assertEqual(result["status"], "APPROVED")
+        status = compute_status(self.conn, tx, AS_OF)
+        self.assertEqual(status["variation_orders"][0]["status"], "APPROVED")
+        self.assertNotIn("VARIATION_ORDER_PENDING_REVIEW",
+                         [a["code"] for a in status["alerts"]])
+
+    def test_dashboard_aggregates_across_contracts(self):
+        seeded_contract(self.conn)
+        seeded_contract(self.conn)
+        data = dashboard(self.conn, AS_OF)
+        self.assertEqual(data["contracts_tracked"], 2)
+        self.assertEqual(data["total_contract_value"], 2_000_000)
+        self.assertEqual(data["at_risk_contracts"], 2)
+        self.assertTrue(data["alerts"])
+
+    def test_html_dashboard_is_self_contained(self):
+        seeded_contract(self.conn)
+        markup = render_dashboard_html(self.conn, AS_OF)
+        self.assertIn("Contract implementation monitoring", markup)
+        self.assertIn("PHP 1,000,000.00", markup)
+        self.assertNotIn("http://", markup)
+        self.assertNotIn("https://", markup)
+        self.assertIn("Advisory", markup)
+
+    def test_html_export_writes_a_file(self):
+        seeded_contract(self.conn)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "dashboard.html")
+            export_dashboard(self.conn, path, AS_OF)
+            self.assertTrue(os.path.exists(path))
+            with open(path, encoding="utf-8") as fh:
+                self.assertIn("<html", fh.read())
+
+    def test_compile_folder_includes_monitoring_records(self):
+        tx, _ = seeded_contract(self.conn)
+        folder = compile_folder(self.conn, tx)
+        mon = folder["contract_monitoring"]
+        self.assertIsNotNone(mon["terms"])
+        self.assertEqual(len(mon["milestones"]), 3)
+        self.assertEqual(folder["manifest"]["monitoring_milestone_count"], 3)
+
+    def test_monitoring_tables_survive_migration(self):
+        tx, ids = seeded_contract(self.conn)
+        record_milestone_completion(self.conn, ids[0], "2026-02-01",
+                                    "doc-1", "inspector-01")
+        seal_folder(self.conn, tx, "bac-secretariat-01")
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "vps.db")
+            migrate(self.conn, target)
+            tconn = core._connect(target)
+            try:
+                self.assertEqual(tconn.execute(
+                    "SELECT count(*) c FROM milestone WHERE tx_id=?", (tx,)
+                ).fetchone()["c"], 3)
+                self.assertEqual(tconn.execute(
+                    "SELECT status FROM milestone WHERE id=?", (ids[0],)
+                ).fetchone()["status"], "COMPLETED")
+            finally:
+                tconn.close()
 
 
 if __name__ == "__main__":

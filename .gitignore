@@ -6,6 +6,9 @@ __pycache__/
 .venv/
 venv/
 
+# Generated dashboard preview (run python demo.py to regenerate)
+sample-dashboard.html
+
 # Local databases and temporary artifacts
 *.db
 *.db-journal

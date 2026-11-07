@@ -9,7 +9,7 @@
 
 **Summary:** 3 × P0 · 14 × P1 · 10 × P2 = **27 findings**. Nine items are go-live blockers (marked **GL**).
 
-**Build status (2026-11-06):** steps 1–8 of the revised build order are implemented in `procurement-core/` with 72 passing tests (A1–A31 plus checker, forms, extraction, RAG and COA-audit suites). Findings R-01…R-19 have code-level controls in the prototype; they still require the human/legal sign-offs listed in the compliance checklist before any real transaction is processed. R-12 (audit trail) and R-26 (archive immutability) now have concrete implementations: append-only hash-chained ledger, WORM sealed folders, hash-sealed export package, and a read-only COA verification endpoint. R-17 (as-of RAG) has 13 verified official passages; remaining work is ingesting the full GPPB/COA corpus and replacing the legacy placeholder.
+**Build status (2026-11-07):** steps 1–9 of the revised build order are implemented in `procurement-core/` with 85 passing tests (A1–A37 plus checker, forms, extraction, RAG, COA-audit and monitoring suites). Only step 10 (correction logging + retraining) remains. Findings R-01…R-19 have code-level controls in the prototype; they still require the human/legal sign-offs listed in the compliance checklist before any real transaction is processed. R-12 (audit trail) and R-26 (archive immutability) now have concrete implementations: append-only hash-chained ledger, WORM sealed folders, hash-sealed export package, and a read-only COA verification endpoint. R-17 (as-of RAG) has 13 verified official passages; remaining work is ingesting the full GPPB/COA corpus and replacing the legacy placeholder.
 
 ---
 
