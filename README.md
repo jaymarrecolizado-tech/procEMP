@@ -71,6 +71,8 @@ never invents prices.
 ## Repository layout
 
 ```
+deploy/                        VPS deployment kit (systemd units, nginx/CloudPanel
+                               vhosts, idempotent installer, security checklist)
 procurement-review/            Design and compliance documents
   00-source-workflow.md        The original RA 9184-based design (for comparison)
   01-revised-workflow-RA12009.md  Current design, dual-regime, build order, §9.1 remaining work
