@@ -262,6 +262,16 @@ def draft_chain(conn, params):
         },
     }
 
+    # ------------------------------------------------ partial chain (initiation)
+    # Without human-entered canvass data there are no supplier bids — and the
+    # award documents must never be drafted without them. PR + RFQ only.
+    if not suppliers:
+        report = validate_chain(docs)
+        report["violations"] = item_violations + report["violations"]
+        report["numbering"] = {"PR": pr_no, "RFQ": rfq_no}
+        report["generated_at"] = now()
+        return docs, report
+
     # -------------------------------------------------------- 3. Minutes
     docs["minutes_of_opening"] = {
         "file_hint": "03-minutes-of-opening.pdf",
@@ -451,14 +461,24 @@ def validate_chain(docs):
         return docs[key]["data"]
 
     pr, rfq = data("purchase_request"), data("request_for_quotation")
-    minutes, abstract = data("minutes_of_opening"), data("abstract_of_bids")
-    resolution, po = data("bac_resolution_award"), data("purchase_order")
+    full = "purchase_order" in docs
+    minutes = data("minutes_of_opening") if full else {}
+    abstract = data("abstract_of_bids") if full else {}
+    resolution = data("bac_resolution_award") if full else {}
+    po = data("purchase_order") if full else {}
 
     # totals are computed, not trusted
     pr_total, pr_v = compute_items([dict(i) for i in pr["items"]])
     v += [f"purchase_request: {x}" for x in pr_v]
     if round(pr_total, 2) != round(pr["total_amount"], 2):
         v.append(f"purchase_request: line totals ({pr_total}) != total_amount ({pr['total_amount']})")
+    if not full:
+        # initiation-only chain (PR + RFQ): canvass has not happened yet
+        if round(rfq.get("abc", 0), 2) != round(pr["total_amount"], 2):
+            v.append("request_for_quotation: abc != purchase_request total_amount")
+        if rfq.get("pr_number_ref") != pr.get("pr_number"):
+            v.append("request_for_quotation.pr_number_ref != purchase_request.pr_number")
+        return {"ok": not v, "violations": v, "notes": notes}
     po_total, po_v = compute_items([dict(i) for i in po["items"]])
     v += [f"purchase_order: {x}" for x in po_v]
     if round(po_total, 2) != round(po["total_amount"], 2):
@@ -690,7 +710,9 @@ def render_pdfs(docs, out_dir, *, allow_invalid=False):
     os.makedirs(out_dir, exist_ok=True)
     written = []
     for key in DOC_ORDER:
-        doc = docs[key]
+        doc = docs.get(key)
+        if not doc:
+            continue  # partial chain (PR + RFQ only, pre-canvass)
         spec = doc["render"]
         if report["violations"]:
             spec = dict(spec)

@@ -278,6 +278,141 @@ class AdapterScaffoldTests(unittest.TestCase):
         self.assertTrue(_query_authed({"token": "secret"}, "secret"))
         self.assertFalse(_query_authed({"token": "wrong"}, "secret"))
 
+    def test_draft_form_and_handler(self):
+        """Drafting web form: defaults render; the handler drafts the partial
+        (PR+RFQ) and full chains; required fields fail closed; a
+        DRAFT_GENERATED ledger event records the named actor."""
+        import tempfile
+        from review_server import DRAFT_RESULTS, _DRAFT_DEFAULTS, handle_draft_post, render_draft_form
+        html = render_draft_form(auth_token="tok")
+        self.assertIn("Generate draft chain", html)
+        self.assertIn('name="purpose"', html)
+        conn = init_db(":memory:", seed=False)
+        tmp = tempfile.mkdtemp(prefix="procemp-drafts-")
+        form = {}
+        d = _DRAFT_DEFAULTS
+        for k in ("purpose", "end_user", "office", "rc_code", "fund_cluster",
+                  "pr_date", "deadline_date", "deadline_time", "opening_date",
+                  "opening_time", "delivery_date", "place", "payment_term",
+                  "req_name", "req_desig", "app_name", "app_desig",
+                  "bac_chair", "sec_head", "email", "accountant"):
+            form[k] = [str(d.get(k) or "")]
+
+        def add_items(prefix, rows):
+            for i, it in enumerate(rows, start=1):
+                form[f"{prefix}_stock_{i}"] = [it.get("stock_no", "")]
+                form[f"{prefix}_desc_{i}"] = [it.get("description", "")]
+                form[f"{prefix}_unit_{i}"] = [it.get("unit", "")]
+                form[f"{prefix}_qty_{i}"] = [str(it.get("quantity", ""))]
+                form[f"{prefix}_cost_{i}"] = [str(it.get("unit_cost", ""))]
+
+        add_items("item", d["items"])
+        form["actor_id"] = ["form-actor-01"]
+        with self.assertRaises(CoreError):
+            handle_draft_post(conn, {"purpose": ["x"]}, tmp)  # missing fields
+        res = handle_draft_post(conn, form, tmp)  # partial: PR + RFQ only
+        self.assertEqual(len(res["files"]), 2)
+        self.assertEqual(res["violations"], [])
+        self.assertIn("RO2-PR-", res["pr"])
+        events = conn.execute(
+            "SELECT actor_id, actor_role FROM ledger_event "
+            "WHERE event_type='DRAFT_GENERATED'").fetchall()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["actor_id"], "form-actor-01")
+        # full chain with human-entered canvass data
+        for i, s in enumerate(d["suppliers"], start=1):
+            form[f"sup_name_{i}"] = [s["supplier"]]
+            form[f"sup_bid_{i}"] = [str(s["bid_amount"])]
+        awd = d["award"]
+        form["award_supplier"] = [awd["supplier"]]
+        form["award_rep"] = [awd["representative"]]
+        form["award_addr"] = [awd["address"]]
+        form["award_tin"] = [awd["tin"]]
+        add_items("awd", awd["items"])
+        res2 = handle_draft_post(conn, form, tmp)
+        self.assertEqual(len(res2["files"]), 6)
+        self.assertEqual(res2["violations"], [])
+        self.assertIn(res2["pr"], DRAFT_RESULTS)
+        conn.close()
+
+    def test_draft_routes_over_http(self):
+        """GET /draft (auth), POST /draft, and /draft-file downloads —
+        including that path traversal and unknown names are refused."""
+        import tempfile
+        import threading
+        import urllib.request
+        from http.server import ThreadingHTTPServer
+        from review_server import DRAFT_RESULTS, make_handler
+        conn = init_db(":memory:", seed=False)
+        tmp = tempfile.mkdtemp(prefix="procemp-drafts-http-")
+        server = ThreadingHTTPServer(("127.0.0.1", 0),
+                                     make_handler(conn, auth_token="tok",
+                                                  drafts_dir=tmp))
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None  # surface 3xx instead of following it
+
+        opener = urllib.request.build_opener(NoRedirect)
+
+        def req(path, data=None, headers=None):
+            h = {"X-Auth-Token": "tok"} if headers is None else headers
+            r = urllib.request.Request(
+                f"http://127.0.0.1:{port}{path}", data=data,
+                headers=h, method="POST" if data else "GET")
+            try:
+                with opener.open(r, timeout=5) as resp:
+                    return resp.status, dict(resp.headers), resp.read()
+            except urllib.error.HTTPError as e:
+                return e.code, dict(e.headers), e.read()
+
+        try:
+            self.assertEqual(req("/draft", headers={})[0], 401)  # no token -> denied
+            status, _, body = req("/draft")
+            self.assertEqual(status, 200)
+            self.assertIn(b"Generate draft chain", body)
+            from review_server import _DRAFT_DEFAULTS
+            d = _DRAFT_DEFAULTS
+            fields = {k: str(d.get(k) or "") for k in (
+                "purpose", "end_user", "office", "rc_code", "fund_cluster",
+                "pr_date", "deadline_date", "deadline_time", "opening_date",
+                "opening_time", "delivery_date", "place", "payment_term",
+                "req_name", "req_desig", "app_name", "app_desig", "bac_chair",
+                "sec_head", "email", "accountant")}
+            fields.update({"actor_id": "http-actor", "allow_invalid": "0"})
+            for i, it in enumerate(d["items"], start=1):
+                fields[f"item_desc_{i}"] = it.get("description", "")
+                fields[f"item_unit_{i}"] = it.get("unit", "")
+                fields[f"item_qty_{i}"] = str(it.get("quantity", ""))
+                fields[f"item_cost_{i}"] = str(it.get("unit_cost", ""))
+            body = urllib.parse.urlencode(fields).encode()
+            status, headers, _ = req("/draft", data=body)
+            self.assertEqual(status, 303, headers)
+            loc = headers.get("Location", "")
+            self.assertIn("/draft?generated=", loc)
+            pr = urllib.parse.parse_qs(
+                urllib.parse.urlparse(loc).query)["generated"][0]
+            status, headers, page_body = req(loc)
+            self.assertEqual(status, 200)
+            self.assertIn(("Draft chain generated").encode(), page_body)
+            name = DRAFT_RESULTS[pr]["files"][0]
+            fname = os.path.basename(name)
+            status, headers, pdf = req(f"/draft-file?pr={pr}&name={fname}")
+            self.assertEqual(status, 200)
+            self.assertTrue(pdf.startswith(b"%PDF"))
+            self.assertIn("attachment", headers.get("Content-Disposition", ""))
+            # traversal and unknown names refused (404, never a file read)
+            for bad in ("..%2F..%2Fsecret.txt", "no-such.pdf"):
+                status, _, _ = req(f"/draft-file?pr={pr}&name={bad}")
+                self.assertEqual(status, 404, bad)
+            conn.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

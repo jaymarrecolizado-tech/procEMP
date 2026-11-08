@@ -4,7 +4,7 @@ A working prototype of an AI-assisted government procurement system, built again
 **RA 12009 (New Government Procurement Act)** and its IRR, with dual-regime support
 for legacy **RA 9184 / 2016 IRR** transactions during the transitory period.
 
-> **Status:** all 10 build-order steps implemented · **206 tests passing** · stdlib-only ·
+> **Status:** all 10 build-order steps implemented · **208 tests passing** · stdlib-only ·
 > **prototype, not a deployable government system**. No model weights, embedding models,
 > official form bodies or production database are bundled. See [Before production](#before-production).
 
@@ -21,7 +21,7 @@ Requires Python 3.10+. No third-party packages.
 ```bash
 cd procurement-core
 
-# Run the full acceptance suite (206 tests)
+# Run the full acceptance suite (208 tests)
 python -m unittest discover -s tests -v
 
 # Run the end-to-end scenario (14 steps, prints each control firing)
@@ -49,6 +49,13 @@ cd procurement-core
 python svp_documents.py demo --out ./svp-output   # fictional end-to-end set (6 PDFs + manifest)
 python svp_documents.py words --amount 26100      # amount-in-words helper
 ```
+
+There is also a **web form** at `/draft` on the review UI
+(`python review_server.py --db procurement.db [--drafts-dir ./drafts]`): fill
+transaction parameters in the browser, get the draft PDFs as downloads. With
+no canvass data yet, only PR + RFQ are drafted — award documents (Minutes,
+Abstract, Resolution, PO) are never generated without human-entered supplier
+bids.
 
 Every value is computed, never invented: amounts from item lines, document numbers
 from the gap-free ledger numbering, and the chain is validated before rendering —
@@ -106,7 +113,7 @@ procurement-core/              Runnable prototype (Python stdlib only)
   seed_forms.json              36 GPPB forms, Standard vs Recommended
   seed_corpus.json             13 verified official legal passages (verbatim excerpts)
   seed_extraction_schema.json  Typed extraction output contract
-  tests/                       206 tests (core + queue + tracks + hardening + migration + svp_docs)
+  tests/                       208 tests (core + queue + tracks + hardening + migration + svp_docs)
 ```
 
 ---

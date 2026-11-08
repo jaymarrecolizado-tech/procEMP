@@ -34,7 +34,7 @@ import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from core import CoreError, _connect, canonical, now
+from core import CoreError, _connect, append_event, canonical, now
 from ops_tls import (
     add_security_headers, add_tls_arguments, build_tls_context, scheme_for,
     wrap_server,
@@ -46,6 +46,12 @@ from review_queue import (
     get_item, list_queue, queue_dashboard, recommend, resolve_item,
     submit_override_correction,
 )
+from svp_documents import _demo_params, draft_chain, render_pdfs
+
+# In-memory registry of drafts generated this process, keyed by PR number.
+# Downloads are served only from this registry — never from user-supplied
+# paths — which makes path traversal impossible by construction.
+DRAFT_RESULTS = {}
 
 
 def _assert_loopback(host):
@@ -375,6 +381,244 @@ def _query_authed(params, auth_token):
 # Advisory action forms are tiny; cap the request body to bound memory/DoS.
 MAX_POST_BYTES = 1024 * 1024
 
+_DRAFT_DEFAULTS = _demo_params()
+
+
+def _field(label, name, value="", required=False, input_type="text", size=28):
+    req = " required" if required else ""
+    return (f'<label>{label}</label>'
+            f'<input name="{name}" type="{input_type}" value="{esc(value)}"'
+            f' size="{size}"{req}>')
+
+
+def _items_rows(prefix, rows, defaults):
+    """Editable item grid rows (description/unit/qty/cost)."""
+    out = ['<table class="draft-items"><thead><tr><th>#</th><th>Stock No.</th>'
+           '<th>Description (one per line)</th><th>Unit</th><th>Qty</th>'
+           '<th>Unit Cost</th></tr></thead><tbody>']
+    for i in range(1, rows + 1):
+        d = (defaults or {}).get(i, {})
+        out.append(
+            f'<tr><td>{i}</td>'
+            f'<td><input name="{prefix}_stock_{i}" value="{esc(d.get("stock_no", ""))}" size="6"></td>'
+            f'<td><textarea name="{prefix}_desc_{i}" rows="2" cols="34">{esc(d.get("description", ""))}</textarea></td>'
+            f'<td><input name="{prefix}_unit_{i}" value="{esc(d.get("unit", ""))}" size="6"></td>'
+            f'<td><input name="{prefix}_qty_{i}" value="{esc(d.get("quantity", ""))}" size="6"></td>'
+            f'<td><input name="{prefix}_cost_{i}" value="{esc(d.get("unit_cost", ""))}" size="10"></td></tr>')
+    out.append("</tbody></table>")
+    return "".join(out)
+
+
+def render_draft_form(result=None, error=None, auth_token=None):
+    """End-user drafting form: transaction parameters -> full SVP chain PDFs.
+    Defaults are the fictional demo scenario; every value is editable."""
+    d = _DRAFT_DEFAULTS
+    req = d["requested_by"]
+    app = d["approved_by"]
+    sup_rows = {i: {"supplier": s.get("supplier", ""),
+                    "bid_amount": s.get("bid_amount", "")}
+                for i, s in enumerate(d.get("suppliers", []), start=1)}
+    awd = d.get("award", {})
+    awd_items = {i: {"description": it.get("description", ""),
+                     "unit": it.get("unit", ""), "quantity": it.get("quantity", ""),
+                     "unit_cost": it.get("unit_cost", "")}
+                 for i, it in enumerate(awd.get("items", []), start=1)}
+    sup_html = ""
+    for i in range(1, 5):
+        s = sup_rows.get(i) or {}
+        sup_html += (
+            '<div class="sup-row">'
+            + _field("Supplier " + str(i), "sup_name_" + str(i), s.get("supplier", ""))
+            + _field("Total Bid (PHP)", "sup_bid_" + str(i), s.get("bid_amount", ""))
+            + "</div>")
+    body = f"""
+    <p class="muted">Drafts the full SVP chain (PR → RFQ → Minutes → Abstract →
+    Resolution → PO) with computed amounts and ledger-issued numbers.
+    Fail-closed: a words/figures mismatch, fund-cluster drift, award to a
+    non-lowest bidder or broken references <b>blocks PDF rendering</b>.
+    Supplier bid amounts are human-entered canvass data — the system never
+    invents prices. Every page is watermarked
+    <b>AI-ASSISTED DRAFT</b> — not an official form until approved and signed.</p>
+    <form method="post" action="/draft">{_token_field(auth_token)}
+      <div class="grid">
+        <fieldset class="panel"><legend>Transaction</legend>
+          {_field("Purpose / Project Title", "purpose", d["purpose"], required=True, size=60)}
+          {_field("End User", "end_user", d["end_user"])}
+          {_field("Office/Section", "office", d["office_section"])}
+          {_field("Responsibility Center Code", "rc_code", d["responsibility_center_code"])}
+          {_field("Fund Cluster", "fund_cluster", d["fund_cluster"], required=True)}
+          {_field("PR Date", "pr_date", d["pr_date"], required=True, input_type="date")}
+          {_field("RFQ Deadline Date", "deadline_date", d["deadline_date"], required=True, input_type="date")}
+          {_field("Deadline Time", "deadline_time", d["deadline_time"])}
+          {_field("Opening Date", "opening_date", d["opening_date"], input_type="date")}
+          {_field("Opening Time", "opening_time", d["opening_time"])}
+          {_field("Delivery Date", "delivery_date", d["delivery_date"], input_type="date")}
+          {_field("Place of Delivery", "place", d["place_of_delivery"])}
+          {_field("Payment Term", "payment_term", d["payment_term"], size=44)}
+        </fieldset>
+        <fieldset class="panel"><legend>Officials (named humans)</legend>
+          {_field("Requested by — Name", "req_name", req["name"], required=True)}
+          {_field("Requested by — Designation", "req_desig", req["designation"], required=True)}
+          {_field("Approved by — Name", "app_name", app["name"], required=True)}
+          {_field("Approved by — Designation", "app_desig", app["designation"], required=True)}
+          {_field("BAC Chairperson", "bac_chair", d["bac_chairperson"]["name"], required=True)}
+          {_field("BAC Secretariat Head", "sec_head", d["secretariat_head"]["name"], required=True)}
+          {_field("Contact Email", "email", d["contact_email"], size=30)}
+          {_field("Accountant", "accountant", d["accountant"])}
+        </fieldset>
+      </div>
+      <fieldset class="panel"><legend>Items (PR lines — amounts are computed, never trusted)</legend>
+        {_items_rows("item", 6, {i: {"stock_no": it.get("stock_no", ""),
+                                     "description": it.get("description", ""),
+                                     "unit": it.get("unit", ""),
+                                     "quantity": it.get("quantity", ""),
+                                     "unit_cost": it.get("unit_cost", "")}
+                                  for i, it in enumerate(d["items"], start=1)})}
+      </fieldset>
+      <fieldset class="panel"><legend>Canvass — supplier bids (human-entered; blank to skip award docs)</legend>
+        {sup_html}
+        <h3>Award (optional — quoted prices from the canvass)</h3>
+        {_field("Awarded Supplier (must be the lowest bid)", "award_supplier", awd.get("supplier", ""))}
+        {_field("Supplier Representative", "award_rep", awd.get("representative", ""))}
+        {_field("Supplier Address", "award_addr", awd.get("address", ""), size=40)}
+        {_field("Supplier TIN", "award_tin", awd.get("tin", ""))}
+        <p class="muted">Leave award item costs blank to reuse PR unit costs (then the PO
+        total will differ from the supplier bids and validation will flag it — as it
+        should).</p>
+        {_items_rows("awd", 6, awd_items)}
+      </fieldset>
+      <fieldset class="panel"><legend>Audit (you — the named human requesting this draft)</legend>
+        {_field("Your Actor ID", "actor_id", "", required=True)}
+        {_field("Your Role", "actor_role", "BAC_STAFF", required=True)}
+        <label class="chk"><input type="checkbox" name="allow_invalid" value="1">
+          Render even if validation fails (every page stamped with a violations banner)</label>
+        <button type="submit">Generate draft chain (6 PDFs)</button>
+      </fieldset>
+    </form>
+    """
+    if result:
+        files_html = "".join(
+            f'<li><a href="/draft-file?pr={esc(result["pr"])}&name={esc(os.path.basename(f))}">{esc(os.path.basename(f))}</a></li>'
+            for f in result["files"])
+        viol_html = ""
+        if result["violations"]:
+            viol_html = ("<p class='error'>Validation violations (drafts are stamped):</p><ul>"
+                         + "".join(f"<li>{esc(v)}</li>" for v in result["violations"]) + "</ul>")
+        notes_html = ""
+        if result.get("notes"):
+            notes_html = ("<p class='muted'>Advisory notes:</p><ul>"
+                          + "".join(f"<li>{esc(n)}</li>" for n in result["notes"]) + "</ul>")
+        body += f"""
+        <section class="panel">
+          <h2>Draft chain generated — {esc(result["pr"])} (watermarked, unsigned)</h2>
+          <p>Numbering: {esc(canonical(result["numbering"]))}</p>
+          {viol_html}{notes_html}
+          <ul>{files_html}</ul>
+          <p class="muted">A DRAFT_GENERATED event was recorded in the ledger for
+          actor {esc(result["actor"])}.</p>
+        </section>"""
+    return page("ProcEMP Drafting — SVP Document Chain", body, message=error and None, error=error)
+
+
+def _f(form, key, default=""):
+    return ((form.get(key) or [default])[0] or default).strip()
+
+
+def _items_from_form(form, prefix, count):
+    items = []
+    for i in range(1, count + 1):
+        desc = _f(form, f"{prefix}_desc_{i}").replace("\r", "")
+        if not desc:
+            continue
+        qty = _f(form, f"{prefix}_qty_{i}")
+        cost = _f(form, f"{prefix}_cost_{i}")
+        items.append({
+            "stock_no": _f(form, f"{prefix}_stock_{i}"),
+            "description": desc, "unit": _f(form, f"{prefix}_unit_{i}"),
+            "quantity": float(qty) if qty else None,
+            "unit_cost": float(cost) if cost else None,
+        })
+    return items
+
+
+def handle_draft_post(conn, form, drafts_dir):
+    """Build params from the form, draft the chain, render PDFs, record the
+    ledger event. Returns a result dict for the form page. Raises CoreError
+    on missing required fields; render failures (validation) propagate."""
+    missing = [k for k in ("purpose", "pr_date", "deadline_date", "actor_id")
+               if not _f(form, k)]
+    if missing:
+        raise CoreError("missing required fields: " + ", ".join(missing))
+    items = _items_from_form(form, "item", 6)
+    if not items:
+        raise CoreError("at least one item line is required")
+    params = {
+        "entity_name": "Department of Information and Communications Technology",
+        "header_address": "Regional Office 02 - Sample Address, Sample City",
+        "end_user": _f(form, "end_user"),
+        "office_section": _f(form, "office"),
+        "responsibility_center_code": _f(form, "rc_code"),
+        "fund_cluster": _f(form, "fund_cluster"),
+        "purpose": _f(form, "purpose"),
+        "mode_of_procurement": "Small Value Procurement",
+        "pr_date": _f(form, "pr_date"),
+        "deadline_date": _f(form, "deadline_date"),
+        "deadline_time": _f(form, "deadline_time", "9:00 AM"),
+        "opening_date": _f(form, "opening_date", _f(form, "deadline_date")),
+        "opening_time": _f(form, "opening_time", "11:00 AM"),
+        "delivery_date": _f(form, "delivery_date"),
+        "place_of_delivery": _f(form, "place"),
+        "payment_term": _f(form, "payment_term"),
+        "accountant": _f(form, "accountant"),
+        "contact_email": _f(form, "email"),
+        "requested_by": {"name": _f(form, "req_name"),
+                         "designation": _f(form, "req_desig")},
+        "approved_by": {"name": _f(form, "app_name"),
+                        "designation": _f(form, "app_desig")},
+        "bac_chairperson": {"name": _f(form, "bac_chair")},
+        "secretariat_head": {"name": _f(form, "sec_head")},
+        "bac_members": [
+            {"name": _f(form, "bac_chair"), "role": "BAC Chairperson"}],
+        "items": items,
+    }
+    suppliers = []
+    for i in range(1, 5):
+        name = _f(form, f"sup_name_{i}")
+        bid = _f(form, f"sup_bid_{i}")
+        if name and bid:
+            suppliers.append({"supplier": name, "bid_amount": float(bid)})
+    if suppliers:
+        params["suppliers"] = suppliers
+    award_supplier = _f(form, "award_supplier")
+    award_items = _items_from_form(form, "awd", 6)
+    if award_supplier:
+        award = {"supplier": award_supplier,
+                 "representative": _f(form, "award_rep"),
+                 "address": _f(form, "award_addr"), "tin": _f(form, "award_tin")}
+        if award_items:
+            award["items"] = award_items
+        params["award"] = award
+
+    docs, report = draft_chain(conn, params)
+    allow_invalid = bool((form.get("allow_invalid") or ["0"])[0] == "1")
+    written, manifest = render_pdfs(docs, drafts_dir, allow_invalid=allow_invalid)
+    pr_no = report["numbering"]["PR"]
+    append_event(conn, pr_no, "DRAFT_GENERATED", _f(form, "actor_id"),
+                 _f(form, "actor_role", "BAC_STAFF"), {
+                     "numbering": report["numbering"],
+                     "purpose": params["purpose"],
+                     "violations": report["violations"],
+                     "files": [os.path.basename(f) for f in written],
+                     "generated_at": report["generated_at"],
+                 })
+    result = {
+        "pr": pr_no, "files": written, "violations": report["violations"],
+        "notes": report.get("notes", []), "numbering": report["numbering"],
+        "actor": _f(form, "actor_id"),
+    }
+    DRAFT_RESULTS[pr_no] = result
+    return result
+
 
 def _check_auth(headers, auth_token):
     """Return True when unauthenticated access should be rejected.
@@ -388,19 +632,22 @@ def _check_auth(headers, auth_token):
     return not hmac.compare_digest(provided, auth_token)
 
 
-def make_handler(conn, *, auth_token=None, tls=False):
+def make_handler(conn, *, auth_token=None, tls=False, drafts_dir="./drafts"):
     class Handler(BaseHTTPRequestHandler):
         def _denied(self):
             self._send(401, page("Unauthorized",
                                  "<p>X-Auth-Token required. Use the CLI for unauthenticated local work.</p>",
                                  error="401 Unauthorized"))
 
-        def _send(self, code, body, content_type="text/html; charset=utf-8"):
+        def _send(self, code, body, content_type="text/html; charset=utf-8",
+                  extra_headers=None):
             data = body.encode("utf-8") if isinstance(body, str) else body
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            for key, value in (extra_headers or []):
+                self.send_header(key, value)
             add_security_headers(self.send_header, tls=tls)
             self.end_headers()
             self.wfile.write(data)
@@ -419,6 +666,28 @@ def make_handler(conn, *, auth_token=None, tls=False):
                     self._send(200, render_index(conn, params, params.get("msg"), params.get("err"), auth_token=auth_token))
                 elif parsed.path == "/item":
                     self._send(200, render_item(conn, params["id"], params.get("msg"), params.get("err"), auth_token=auth_token))
+                elif parsed.path == "/draft":
+                    result = DRAFT_RESULTS.get(params.get("generated") or "")
+                    self._send(200, render_draft_form(
+                        result=result, error=params.get("err"),
+                        auth_token=auth_token))
+                elif parsed.path == "/draft-file":
+                    result = DRAFT_RESULTS.get(params.get("pr") or "")
+                    name = os.path.basename(params.get("name") or "")
+                    allowed = {os.path.basename(f): f
+                               for f in (result or {}).get("files", [])}
+                    path = allowed.get(name)
+                    if not path or not os.path.exists(path):
+                        self._send(404, page(
+                            "Not found",
+                            "<p>Draft file not found (downloads are cleared on "
+                            "server restart — regenerate the chain).</p>",
+                            error="404 draft file not found"))
+                    else:
+                        with open(path, "rb") as fh:
+                            self._send(200, fh.read(), "application/pdf",
+                                       extra_headers=[("Content-Disposition",
+                                                       f'attachment; filename="{name}"')])
                 elif parsed.path == "/export":
                     # File export over HTTP disabled (arbitrary-write risk).
                     # Use: python review_queue.py export --out <path>
@@ -435,7 +704,7 @@ def make_handler(conn, *, auth_token=None, tls=False):
             parsed = urllib.parse.urlparse(self.path)
             raw = ""
             try:
-                if parsed.path != "/action":
+                if parsed.path not in ("/action", "/draft"):
                     self._send(400, page("Error", "<p>Unknown POST path.</p>",
                                          error="unknown POST path"))
                     return
@@ -458,6 +727,16 @@ def make_handler(conn, *, auth_token=None, tls=False):
                             hmac.compare_digest(form_token, auth_token)):
                         self._denied()
                         return
+                if parsed.path == "/draft":
+                    result = handle_draft_post(conn, form, drafts_dir)
+                    loc = (f"/draft?generated={urllib.parse.quote(result['pr'])}"
+                           f"&msg={urllib.parse.quote('Draft chain generated (unsigned).')}")
+                    self.send_response(303)
+                    self.send_header("Location", loc)
+                    self.send_header("Content-Length", "0")
+                    add_security_headers(self.send_header, tls=tls)
+                    self.end_headers()
+                    return
                 item_id, msg = handle_post(conn, form)
                 loc = f"/item?id={urllib.parse.quote(item_id)}&msg={urllib.parse.quote(msg)}"
                 self.send_response(303)
@@ -466,8 +745,16 @@ def make_handler(conn, *, auth_token=None, tls=False):
                 add_security_headers(self.send_header, tls=tls)
                 self.end_headers()
             except Exception as exc:
+                target = ("/draft" if parsed.path == "/draft" else None)
                 item_id = (urllib.parse.parse_qs(raw).get("item_id") or [""])[0] if 'raw' in locals() else ""
-                if item_id:
+                if target:
+                    loc = f"{target}?err={urllib.parse.quote(str(exc))}"
+                    self.send_response(303)
+                    self.send_header("Location", loc)
+                    self.send_header("Content-Length", "0")
+                    add_security_headers(self.send_header, tls=tls)
+                    self.end_headers()
+                elif item_id:
                     loc = f"/item?id={urllib.parse.quote(item_id)}&err={urllib.parse.quote(str(exc))}"
                     self.send_response(303)
                     self.send_header("Location", loc)
@@ -484,12 +771,14 @@ def make_handler(conn, *, auth_token=None, tls=False):
 
 
 def serve(conn, host="127.0.0.1", port=8091, *, auth_token=None,
-          tls_cert=None, tls_key=None, tls_client_ca=None):
+          tls_cert=None, tls_key=None, tls_client_ca=None,
+          drafts_dir="./drafts"):
     _assert_loopback(host)
     tls_context = build_tls_context(tls_cert, tls_key, tls_client_ca)
     server = ThreadingHTTPServer((host, port),
                                  make_handler(conn, auth_token=auth_token,
-                                              tls=tls_context is not None))
+                                              tls=tls_context is not None,
+                                              drafts_dir=drafts_dir))
     wrap_server(server, tls_context)
     scheme = scheme_for(tls_context)
     print(f"ProcEMP advisory review UI on {scheme}://{host}:{port} (loopback only)")
@@ -515,6 +804,8 @@ def main(argv=None):
     parser.add_argument("--db", required=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8091)
+    parser.add_argument("--drafts-dir", default="./drafts",
+                        help="Directory for generated draft PDFs")
     parser.add_argument("--auth-token", default=os.environ.get("REVIEW_AUTH_TOKEN"),
                         help="Shared secret; falls back to REVIEW_AUTH_TOKEN env")
     add_tls_arguments(parser, env_prefix="REVIEW")
@@ -523,7 +814,7 @@ def main(argv=None):
     try:
         serve(conn, args.host, args.port, auth_token=args.auth_token,
               tls_cert=args.tls_cert, tls_key=args.tls_key,
-              tls_client_ca=args.tls_client_ca)
+              tls_client_ca=args.tls_client_ca, drafts_dir=args.drafts_dir)
         return 0
     finally:
         conn.close()
