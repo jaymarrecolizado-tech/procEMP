@@ -211,3 +211,19 @@ Notes:
 - Application-level chain re-verification on the PostgreSQL store needs a
   driver-based verifier (external step) — the dump preserves hashes to make
   that possible. Never edit a dump by hand; re-export instead.
+
+## 10. VPS deployment (CloudPanel / nginx)
+
+The `deploy/` directory at the repo root contains the complete kit:
+systemd units (`procemp-review`, `procemp-coa` — both loopback-bound with
+hardening), an idempotent installer (`deploy.sh`: dedicated user, secrets
+generation, DB init, enable+start), per-site nginx location blocks for
+CloudPanel (subdomains `review.<domain>` / `coa.<domain>`, Let's Encrypt
+managed by the panel), and a security checklist (firewall, token policy,
+IP allowlist, backups, **DPO/DPIA sign-off before any real bid data lands
+on a public host — fictional/demo data only until then**).
+
+Quick path: rsync the repo to the VPS → `sudo bash deploy/deploy.sh <src>`
+→ DNS A-records → CloudPanel sites + certificates → paste vhost blocks →
+rehearse with `ops_smoke.py --review-url/--coa-url`. Full details:
+`deploy/README.md`.

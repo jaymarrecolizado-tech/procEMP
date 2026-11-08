@@ -1,0 +1,19 @@
+[Unit]
+Description=ProcEMP COA verification endpoint (read-only, loopback-only)
+After=network.target
+
+[Service]
+Type=simple
+User=procemp
+Group=procemp
+WorkingDirectory=/opt/procemp/app/procurement-core
+EnvironmentFile=/opt/procemp/etc/procemp.env
+ExecStart=/usr/bin/python3 coa_server.py serve --db /opt/procemp/data/procurement.db --auth-token ${COA_AUTH_TOKEN} --host 127.0.0.1 --port 8090
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
