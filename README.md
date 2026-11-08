@@ -66,6 +66,15 @@ stamps every page with a violations banner). Every rendered page carries an
 approve and sign. Supplier bid amounts are human-entered canvass data; the model
 never invents prices.
 
+### Browser E2E tests (dev-only)
+
+`e2e/test_draft_scenarios.py` drives the drafting form with Playwright
+(chromium): full/partial chain, fail-closed award refusal, required-field
+blocking, PDF downloads, and token auth — 8 scenarios, own server + temp DB.
+Setup: `pip install playwright && python -m playwright install chromium`,
+then `python e2e/test_draft_scenarios.py`. See `e2e/README.md`. The app and
+`procurement-core/tests/` remain stdlib-only.
+
 ---
 
 ## Repository layout
