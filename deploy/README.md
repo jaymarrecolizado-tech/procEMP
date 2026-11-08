@@ -33,8 +33,18 @@ paths (`/draft`, `/item`), which break under prefix rewriting.
 
 2. **Copy this repo to the VPS** (from your workstation):
    ```bash
+   # Linux/macOS workstation:
    rsync -av --exclude .git --exclude __pycache__ --exclude drafts \
      ./ deploy@<vps>:/tmp/procemp-src/
+   ```
+   ```bash
+   # Windows (Git Bash) workstation — tar + scp (Git Bash has no rsync):
+   cd /c/Users/jayre/Desktop/ProcEMP
+   tar --exclude='.git' --exclude='__pycache__' --exclude='*.db' \
+       --exclude='drafts' --exclude='sample-dashboard.html' \
+       -czf /tmp/procemp.tar.gz .
+   scp /tmp/procemp.tar.gz root@<vps-ip>:/tmp/
+   ssh root@<vps-ip> "mkdir -p /tmp/procemp-src && tar -xzf /tmp/procemp.tar.gz -C /tmp/procemp-src"
    ```
    Then on the VPS run: `sudo bash /tmp/procemp-src/deploy/deploy.sh /tmp/procemp-src`
 
