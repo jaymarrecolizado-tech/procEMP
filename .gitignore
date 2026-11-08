@@ -26,3 +26,6 @@ Thumbs.db
 
 # WorkBuddy workspace data (agent memory / session state, not project source)
 .workbuddy-ai/
+
+# E2E report output
+e2e/report/
