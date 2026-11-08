@@ -142,9 +142,11 @@ def _http_get(url, timeout=5):
 
 
 # Well-known loopback runtimes. Probe is GET-only health/tags discovery; no
-# procurement data is ever sent. Covers the runtimes named in plan.md.
+# procurement data is ever sent. Covers the runtimes named in plan.md plus
+# LM Studio's OpenAI-compatible server (default port 1234).
 _RUNTIME_PROBES = [
     ("ollama", "http://127.0.0.1:11434/api/tags"),
+    ("lm_studio", "http://127.0.0.1:1234/v1/models"),
     ("llama_cpp", "http://127.0.0.1:8080/health"),
     ("llama_cpp", "http://127.0.0.1:8080/v1/models"),
     ("vllm", "http://127.0.0.1:8000/v1/models"),
@@ -170,6 +172,13 @@ def probe_runtimes(timeout=5, probes=None):
                         "models": [
                             m.get("model") or m.get("name")
                             for m in (data.get("models") or [])
+                        ][:10],
+                    }
+                elif kind == "lm_studio":
+                    # OpenAI-compatible listing: {"data": [{"id": ...}, ...]}
+                    row["detail"] = {
+                        "models": [
+                            m.get("id") for m in (data.get("data") or [])
                         ][:10],
                     }
                 else:

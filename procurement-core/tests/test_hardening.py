@@ -114,9 +114,10 @@ class ProbeTests(unittest.TestCase):
         result = probe_runtimes(timeout=1)
         self.assertTrue(result["advisory_only"])
         self.assertFalse(result["data_sent"])
-        # default loopback probes; env may or may not have runtimes -> only shape
+        # default loopback probes (ollama, lm_studio, llama_cpp x2, vllm,
+        # procemp_adapter); env may or may not have runtimes -> only shape
         self.assertIn("results", result)
-        self.assertEqual(len(result["results"]), 5)
+        self.assertEqual(len(result["results"]), 6)
 
     def test_probe_refuses_non_loopback(self):
         from model_plumbing_check import _assert_loopback_url
