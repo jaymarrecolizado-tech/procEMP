@@ -224,6 +224,39 @@ class AdapterScaffoldTests(unittest.TestCase):
         fixed = normalize_response({"documents": {}}, model_version="m1")
         self.assertEqual(fixed["model_version"], "m1")
 
+    def test_adapter_normalizes_document_list_variants(self):
+        """Regression: base models return documents as a list with envelope
+        aliases; normalization must map shape without crashing or inventing
+        values, and fail closed (return unchanged) on unrecognizable shapes."""
+        from model_adapter_server import normalize_response
+        # LM Studio/Qwen style: list + document_type + field_confidences
+        out = normalize_response({"documents": [{
+            "document_type": "purchase_request", "status": "READABLE",
+            "fields": {"amount": 1500000},
+            "field_confidences": {"amount": 0.9},
+        }]}, model_version="m1")
+        self.assertEqual(out["documents"]["purchase_request"]["fields"],
+                         {"amount": 1500000})
+        self.assertEqual(out["documents"]["purchase_request"]["confidence"],
+                         {"amount": 0.9})  # alias, value preserved verbatim
+        self.assertEqual(out["documents"]["purchase_request"]["status"],
+                         "READABLE")  # values never rewritten; validator decides
+        # "type" key still works
+        out = normalize_response({"documents": [
+            {"type": "NoticeOfAward", "fields": {"award_to": "ACME"}}]},
+            model_version="m1")
+        self.assertEqual(out["documents"]["NoticeOfAward"]["fields"],
+                         {"award_to": "ACME"})
+        # unknown confidence -> 0 so ProcEMP abstains rather than over-trusting
+        self.assertEqual(out["documents"]["NoticeOfAward"]["confidence"],
+                         {"award_to": 0.0})
+        # unrecognizable list shape: returned unchanged (no crash), validator
+        # will fail closed with "missing or invalid documents map"
+        out = normalize_response({"documents": ["not-a-dict"]}, model_version="m1")
+        self.assertEqual(out["documents"], ["not-a-dict"])
+        # non-dict payload passes through untouched
+        self.assertEqual(normalize_response([1, 2], model_version="m1"), [1, 2])
+
     def test_adapter_refuses_non_loopback(self):
         from model_adapter_server import _assert_loopback
         with self.assertRaises(CoreError):

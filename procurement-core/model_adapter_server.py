@@ -76,8 +76,11 @@ def _extract_json(text):
 def normalize_response(obj, *, model_version):
     """Best-effort normalization for common model output mistakes.
 
-    Never invents document/field values. Only adjusts envelope shape and fills
-    missing model_version/confidence maps where safely inferable.
+    Never invents document/field values. Only adjusts envelope shape (list
+    vs map, common type/confidence key aliases) and fills missing
+    model_version/confidence where safely inferable. Unrecognizable shapes
+    are returned unchanged so the strict validator fails closed instead of
+    the adapter crashing.
     """
     if not isinstance(obj, dict):
         return obj
@@ -85,21 +88,31 @@ def normalize_response(obj, *, model_version):
     out.setdefault("model_version", model_version)
     docs = out.get("documents")
     if not isinstance(docs, dict):
-        # sometimes model returns documents as list or puts fields at top level
+        # models often return documents as a list; items may key the doc type
+        # as "type", "document_type" or "doc_type" (values kept verbatim)
         if isinstance(docs, list):
             mapped = {}
             for item in docs:
-                if isinstance(item, dict) and item.get("type"):
-                    mapped[item["type"]] = {k: v for k, v in item.items() if k != "type"}
+                if not isinstance(item, dict):
+                    continue
+                type_key = next(
+                    (k for k in ("type", "document_type", "doc_type")
+                     if item.get(k)), None)
+                if type_key:
+                    mapped[item[type_key]] = {
+                        k: v for k, v in item.items() if k != type_key}
             if mapped:
                 out["documents"] = mapped
                 docs = mapped
-        else:
+        if not isinstance(docs, dict):
             return out
     for key, doc in list(docs.items()):
         if not isinstance(doc, dict):
             continue
         doc.setdefault("status", "OK")
+        if "confidence" not in doc and isinstance(doc.get("field_confidences"), dict):
+            # common model envelope alias; confidence values preserved as-is
+            doc["confidence"] = doc["field_confidences"]
         if "fields" in doc and "confidence" not in doc and isinstance(doc["fields"], dict):
             # unknown confidence -> 0 so ProcEMP abstains rather than over-trusting
             doc["confidence"] = {k: 0.0 for k in doc["fields"].keys()}
