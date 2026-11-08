@@ -75,81 +75,313 @@ def _token_field(auth_token):
     return f'<input type="hidden" name="auth_token" value="{esc(auth_token)}">'
 
 
-def page(title, body, message=None, error=None):
+def page(title, body, message=None, error=None, active=""):
     flash = ""
     if message:
-        flash += f'<div class="flash ok">{esc(message)}</div>'
+        flash += f'<div class="flash ok" role="status">{esc(message)}</div>'
     if error:
-        flash += f'<div class="flash bad">{esc(error)}</div>'
+        flash += f'<div class="flash bad" role="alert">{esc(error)}</div>'
+    q = ' class="nav-link active"' if active == "queue" else ' class="nav-link"'
+    d = ' class="nav-link active"' if active == "draft" else ' class="nav-link"'
+    generated = esc(now().replace("T", " · "))
     return f"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(title)}</title>
 <style>
-:root{{--bg:#f6f8fb;--card:#fff;--ink:#16202b;--muted:#5d6b7a;--line:#d8e1ec;--warn:#8a4b00;--bad:#8f1d1d;--ok:#1f5f3b;--info:#1f4f8f}}
-*{{box-sizing:border-box}} body{{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}}
-header{{background:#fff;border-bottom:1px solid var(--line);padding:18px 22px}} main{{padding:18px 22px;max-width:1200px;margin:0 auto}}
-h1,h2,h3{{margin:0 0 8px}} a{{color:var(--info)}} .muted{{color:var(--muted)}}
-.notice{{margin-top:10px;padding:12px;border:1px solid #f0d9a8;background:#fff8e8;color:var(--warn);border-radius:10px}}
-.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}}
-.card,section,form.panel{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}}
-.num{{font-size:26px;font-weight:700}} table{{width:100%;border-collapse:collapse}} th,td{{padding:8px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left;font-size:14px}}
-.badge{{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line);background:#f2f5f8;margin-right:4px}}
-.abstain,.fail,.open,.high,.critical{{color:var(--bad);border-color:#efcaca;background:#fff3f3}}
-.pass,.resolved{{color:var(--ok);border-color:#cde6d8;background:#f2fbf6}}
-.claimed,.escalated{{color:var(--info);border-color:#cfe0f5;background:#f3f8ff}}
-pre{{white-space:pre-wrap;word-break:break-word;background:#fbfcfd;border:1px solid var(--line);padding:10px;border-radius:8px;font-size:12px}}
-label{{display:block;font-size:13px;color:var(--muted);margin-top:8px}} input,select,textarea{{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit}}
-textarea{{min-height:70px}} button{{margin-top:10px;padding:9px 14px;border:0;border-radius:8px;background:var(--info);color:#fff;font:inherit;cursor:pointer}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}}
-.flash{{padding:10px 12px;border-radius:10px;margin:12px 0}} .flash.ok{{background:#f2fbf6;border:1px solid #cde6d8;color:var(--ok)}} .flash.bad{{background:#fff3f3;border:1px solid #efcaca;color:var(--bad)}}
-details{{margin-top:8px}} summary{{cursor:pointer;color:var(--info)}}
+:root{{
+  --bg:#e9edf4; --panel:#ffffff; --ink:#111e2c; --muted:#55616f; --line:#d9e0ea;
+  --brand:#0c3d5d; --brand-2:#144e78; --brand-dark:#082a42; --accent:#d8b545; --accent-dark:#a8861e;
+  --ok:#176e46; --ok-bg:#edf6ef; --ok-line:#bfe3cd;
+  --bad:#a63a3a; --bad-bg:#fdf0ee; --bad-line:#f2c6c1;
+  --warn:#7a5200; --warn-bg:#fff6df; --warn-line:#e8d194;
+  --info:#1f4f7a; --info-bg:#edf3fb; --info-line:#c4d7ee;
+  --shadow:0 1px 2px rgba(17,30,44,.06), 0 10px 28px rgba(17,30,44,.07);
+  --radius:12px;
+}}
+*{{box-sizing:border-box}}
+html{{scrollbar-color:var(--brand-2) transparent}}
+body{{margin:0;font:15px/1.55 "Segoe UI",system-ui,-apple-system,Arial,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}}
+.skip-link{{position:absolute;left:-9999px;top:0;padding:10px 16px;background:var(--brand);color:#fff;border-radius:0 0 8px 0;z-index:30;text-decoration:none}}
+.skip-link:focus{{left:0;top:0}}
+:focus-visible{{outline:3px solid var(--accent);outline-offset:2px;border-radius:2px}}
+a{{color:var(--brand-2);text-decoration-thickness:1.5px;text-underline-offset:2px}}
+a:hover{{color:var(--brand-dark)}}
+.mono, code{{font-family:Consolas,SFMono-Regular,Menlo,monospace;font-size:.92em;background:#eef1f6;border:1px solid var(--line);border-radius:6px;padding:1px 6px;white-space:nowrap}}
+.muted{{color:var(--muted)}}
+.small{{font-size:12.5px}}
+
+/* ---------- top bar ---------- */
+.topbar{{background:linear-gradient(180deg,#0a2c44 0%, var(--brand-dark) 100%);color:#fff;border-bottom:3px solid var(--accent)}}
+.topbar-inner{{max-width:1320px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}}
+.brand-text{{display:flex;flex-direction:column;line-height:1.15}}
+.brand-name{{font-size:22px;font-weight:800;letter-spacing:.2px;color:#fff}}
+.brand-tag{{font-size:10.5px;color:#c2d8e9;letter-spacing:1.6px;text-transform:uppercase}}
+.topbar-right{{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:11.5px;color:#aecbdE}}
+.pill-static{{display:inline-flex;align-items:center;gap:7px;background:var(--accent);color:#2b2306;font-weight:800;letter-spacing:1.2px;font-size:10.5px;border-radius:999px;padding:5px 12px}}
+.pill-static::before{{content:"";width:7px;height:7px;border-radius:50%;background:#2b2306}}
+.topbar-meta{{text-align:right;color:#b9d0e0}}
+.topbar-meta time{{display:block;color:#e7eff6;font-size:12px}}
+.subbar{{background:var(--brand);border-bottom:1px solid #06243a}}
+.subbar-inner{{max-width:1320px;margin:0 auto;padding:0 18px;display:flex;gap:2px;flex-wrap:wrap}}
+.nav-link{{display:inline-flex;align-items:center;gap:8px;color:#d3e3ee;text-decoration:none;
+           padding:11px 16px;font-weight:600;font-size:13px;border-bottom:3px solid transparent;transition:background .15s ease,color .15s ease}}
+.nav-link:hover{{background:rgba(255,255,255,.08);color:#fff}}
+.nav-link.active{{color:#fff;border-bottom-color:var(--accent);background:rgba(255,255,255,.07)}}
+
+/* ---------- notice ---------- */
+.advisory{{display:flex;gap:12px;align-items:flex-start;margin:18px 0 20px;padding:12px 16px;
+          background:var(--warn-bg);border:1px solid var(--warn-line);border-left:5px solid var(--accent);
+          border-radius:10px;color:var(--warn);font-size:13px}}
+.advisory strong{{color:#5c3d00}}
+.advisory .mark{{flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#2b2306;
+                 display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}}
+
+/* ---------- generic ---------- */
+main{{max-width:1320px;margin:0 auto;padding:0 24px 48px}}
+h1,h2,h3{{margin:0}}
+.page-head{{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;flex-wrap:wrap;margin:6px 0 16px}}
+.page-head h1{{font-size:26px;letter-spacing:-.01em}}
+.page-head p{{margin:4px 0 0;color:var(--muted);font-size:13.5px}}
+.card{{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}}
+.card-pad{{padding:20px}}
+.card-head{{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line)}}
+.card-head h2{{font-size:15px;letter-spacing:.02em;color:var(--brand-dark);text-transform:uppercase}}
+
+/* stats */
+.stat-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin:0 0 18px}}
+.stat{{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px 16px 12px;border-top:4px solid var(--brand-2)}}
+.stat .label{{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted)}}
+.stat .num{{font-size:30px;font-weight:800;margin-top:2px;text-align:left}}
+.stat .cap{{font-size:11px;color:var(--muted);margin-top:1px}}
+.stat-open{{border-top-color:var(--accent)}}
+.stat-claimed{{border-top-color:var(--info)}}
+.stat-escalated{{border-top-color:var(--bad)}}
+.stat-resolved{{border-top-color:var(--ok)}}
+
+/* segmented filter */
+.filters{{display:inline-flex;background:#fff;border:1px solid var(--line);border-radius:10px;padding:4px;gap:2px;box-shadow:var(--shadow)}}
+.filters a{{padding:7px 13px;border-radius:8px;font-size:12.5px;font-weight:600;color:var(--muted);text-decoration:none}}
+.filters a:hover{{background:var(--info-bg);color:var(--info)}}
+.filters a.on{{background:var(--brand);color:#fff}}
+
+/* tables */
+.table-wrap{{overflow-x:auto;max-width:100%}}
+table{{width:100%;max-width:100%;border-collapse:collapse;font-size:13px;table-layout:auto}}
+tbody td{{word-break:break-word;overflow-wrap:anywhere}}
+thead th{{text-align:left;font-size:10.5px;letter-spacing:1.1px;text-transform:uppercase;color:#fff;background:var(--brand-2);padding:10px 14px;white-space:nowrap}}
+tbody td{{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle}}
+tbody tr:nth-child(even){{background:#f7fafd}}
+tbody tr:hover{{background:#eef4fb}}
+.num{{text-align:right;font-variant-numeric:tabular-nums}}
+tr:last-child td{{border-bottom:0}}
+.empty{{padding:42px 16px;text-align:center;color:var(--muted)}}
+.count-chip{{background:var(--info-bg);border:1px solid var(--info-line);color:var(--info);border-radius:999px;padding:3px 12px;font-size:12px;font-weight:700}}
+
+/* badges */
+.badge{{display:inline-flex;align-items:center;gap:6px;padding:3px 11px;border-radius:999px;font-size:11.5px;font-weight:700;border:1px solid transparent;white-space:nowrap}}
+.badge::before{{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}}
+.open,.high,.critical{{background:var(--bad-bg);border-color:var(--bad-line);color:var(--bad)}}
+.fail,.abstain{{background:var(--bad-bg);border-color:var(--bad-line);color:var(--bad)}}
+.pass,.resolved{{background:var(--ok-bg);border-color:var(--ok-line);color:var(--ok)}}
+.claimed{{background:var(--info-bg);border-color:var(--info-line);color:var(--info)}}
+.escalated{{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn)}}
+.low,.normal{{background:#eef1f6;border-color:var(--line);color:var(--muted)}}
+
+/* definition lists */
+.meta{{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px 22px;padding:18px 20px}}
+.meta .k{{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted)}}
+.meta .v{{font-size:14px;margin-top:3px}}
+.dl-grid{{display:grid;grid-template-columns:auto 1fr;gap:6px 16px}}
+.dl-grid dt{{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding-top:2px}}
+.dl-grid dd{{margin:0}}
+
+/* item page */
+.crumb{{font-size:12.5px;margin:10px 0 2px;color:var(--muted)}}
+.item-title{{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:16px}}
+.item-title h1{{font-size:24px;letter-spacing:-.01em}}
+.item-layout{{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:18px;align-items:start}}
+@media (max-width:1100px){{.item-layout{{grid-template-columns:1fr}}}}
+.stack{{display:flex;flex-direction:column;gap:16px}}
+.section-gap{{margin-top:14px}}
+.sidebar{{position:sticky;top:18px;display:flex;flex-direction:column;gap:14px}}
+@media (max-width:1100px){{.sidebar{{position:static}}}}
+.side-title{{font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:#fff;background:var(--brand-2);padding:10px 16px;border-radius:var(--radius) var(--radius) 0 0}}
+.action-card{{background:var(--panel);border:1px solid var(--line);border-top:0;padding:14px 16px}}
+.action-card:last-child{{border-radius:0 0 var(--radius) var(--radius)}}
+.action-card h3{{font-size:13px;display:flex;align-items:center;gap:8px;color:var(--brand-dark);margin-bottom:2px}}
+.step{{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--brand);color:#fff;font-size:11px;align-items:center;justify-content:center;font-weight:800;flex:0 0 auto}}
+.hint{{font-size:11px;color:var(--muted);margin-top:8px}}
+.divider{{border:0;border-top:1px solid var(--line);margin:10px 0}}
+
+/* forms */
+fieldset.card, form.card{{margin:0;border:1px solid var(--line);border-radius:var(--radius);padding:0;background:var(--panel);box-shadow:var(--shadow)}}
+.panel{{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;margin:0}}
+legend, .panel-legend{{font-size:12px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:var(--brand-dark);background:var(--info-bg);border:1px solid var(--info-line);padding:6px 12px;border-radius:8px}}
+label{{display:block;font-size:11px;font-weight:700;letter-spacing:.3px;color:var(--muted);margin-top:12px}}
+label:first-child{{margin-top:0}}
+input,select,textarea{{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fbfcfe}}
+input:focus,select:focus,textarea:focus{{border-color:var(--brand-2);background:#fff;box-shadow:0 0 0 3px rgba(20,78,120,.15);outline:none}}
+textarea{{min-height:76px;resize:vertical}}
+.btn{{display:block;width:100%;margin-top:12px;padding:12px 14px;border:0;border-radius:9px;background:var(--brand);color:#fff;font-weight:800;letter-spacing:.2px;cursor:pointer;transition:background .15s ease}}
+.btn:hover{{background:var(--brand-2)}}
+.btn:focus-visible{{outline:3px solid var(--accent);outline-offset:2px}}
+.btn-accent{{background:var(--accent);color:#2b2306}}
+.btn-accent:hover{{background:var(--accent-dark);color:#fff}}
+.btn-quiet{{width:auto;display:inline-flex}}
+
+/* drafting form */
+.two-col{{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}}
+@media (max-width:1000px){{.two-col{{grid-template-columns:1fr}}}}
+.step-card{{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);box-shadow:var(--shadow);padding:16px 18px;margin:0 0 16px}}
+.step-card legend, .panel-legend{{display:inline-block;font-size:11px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;color:var(--brand-dark);background:var(--info-bg);border:1px solid var(--info-line);padding:6px 14px;border-radius:8px;margin-bottom:4px}}
+.sup-row{{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 0;border-bottom:1px dashed var(--line)}}
+.sup-row:last-child{{border-bottom:0}}
+.chk{{display:flex !important;align-items:center;gap:10px;font-size:13px !important;margin-top:14px !important;color:var(--muted) !important;font-weight:600 !important}}
+.chk input{{width:auto !important}}
+.error{{color:var(--bad);font-weight:700}}
+.draft-items td,.draft-items th{{font-size:12.5px}}
+.draft-items input,.draft-items textarea{{padding:6px 8px;font-size:12.5px}}
+.draft-items textarea{{min-height:52px}}
+
+/* details */
+details{{margin-top:4px}}
+summary{{cursor:pointer;color:var(--brand-2);font-weight:600;font-size:13px}}
+summary:hover{{color:var(--brand-dark)}}
+pre{{white-space:pre-wrap;word-break:break-word;background:#f4f6fa;border:1px solid var(--line);padding:10px 12px;border-radius:8px;font-size:12px}}
+
+/* flash */
+.flash{{padding:11px 14px 11px 42px;border-radius:10px;margin:14px 0;position:relative;border:1px solid transparent;font-size:13.5px}}
+.flash::before{{content:"i";position:absolute;left:12px;top:50%;transform:translateY(-50%);width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px}}
+.flash.ok{{background:var(--ok-bg);border-color:var(--ok-line);color:var(--ok)}}
+.flash.ok::before{{content:"\u2713";background:var(--ok);color:#fff}}
+.flash.bad{{background:var(--bad-bg);border-color:var(--bad-line);color:var(--bad)}}
+.flash.bad::before{{content:"!";background:var(--bad);color:#fff}}
+
+/* footer */
+.site-footer{{border-top:1px solid var(--line);margin-top:8px}}
+.site-footer-inner{{max-width:1320px;margin:0 auto;padding:16px 24px 22px;display:flex;gap:24px;flex-wrap:wrap;justify-content:space-between;font-size:11.5px;color:var(--muted)}}
+.site-footer strong{{color:var(--brand-dark)}}
+
+@media (max-width:900px){{
+  .col-optional{{display:none}}
+  thead th{{padding:9px 10px;font-size:10px}}
+  tbody td{{padding:9px 10px}}
+}}
+@media (max-width:860px){{
+  .meta{{grid-template-columns:1fr 1fr;gap:12px}}
+  .topbar-right{{margin-left:0;width:100%;justify-content:space-between}}
+  .page-head h1{{font-size:22px}}
+}}
+@media (max-width:560px){{.meta{{grid-template-columns:1fr}}.filters a{{padding:7px 9px;font-size:11.5px}}}}
+@media (prefers-reduced-motion:reduce){{*{{transition:none !important}}}}
 </style></head><body>
-<header>
-  <h1>{esc(title)}</h1>
-  <div class="muted"><a href="/">Queue</a> | <a href="/?status=OPEN">Open</a> | <a href="/?status=CLAIMED">Claimed</a> | Generated {esc(now())}</div>
-  <div class="notice"><strong>Advisory decision-support UI.</strong> AI flags/suggestions do <strong>not</strong> make statutory procurement decisions.
-  Authorized humans (BAC/TWG/HOPE/Inspection/Accounting as applicable) must review evidence and record/sign official determinations through the governed workflow.</div>
+<a class="skip-link" href="#main">Skip to main content</a>
+<header class="topbar">
+  <div class="topbar-inner">
+    <svg width="46" height="46" viewBox="0 0 48 48" role="img" aria-label="ProcEMP logo" aria-hidden="true">
+      <rect x="1" y="1" width="46" height="46" rx="10" fill="#d8b545"/>
+      <path d="M17 8h15a2.5 2.5 0 0 1 2.5 2.5V38a2.5 2.5 0 0 1-2.5 2.5H17A2.5 2.5 0 0 1 14.5 38V10.5A2.5 2.5 0 0 1 17 8z" fill="#0c3d5d"/>
+      <path d="M20.5 16.5h8M20.5 21.5h8" stroke="#d8b545" stroke-width="1.8" stroke-linecap="round"/>
+      <circle cx="24.5" cy="30.5" r="3.6" fill="none" stroke="#d8b545" stroke-width="1.8"/>
+      <path d="M23 30.6l1.2 1.2 2.5-2.5" stroke="#d8b545" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div class="brand-text">
+      <span class="brand-name">ProcEMP</span>
+      <span class="brand-tag">AI-Assisted Procurement Workflow</span>
+    </div>
+    <div class="topbar-right">
+      <span class="pill-static">ADVISORY ONLY</span>
+      <span class="topbar-meta">Generated<time>{generated}</time></span>
+    </div>
+  </div>
+  <nav class="subbar" aria-label="Primary navigation">
+    <div class="subbar-inner">
+      <a{q} href="/">Review queue</a>
+      <a{d} href="/draft">SVP drafting</a>
+      <a class="nav-link" href="/health">Health (JSON)</a>
+    </div>
+  </nav>
 </header>
-<main>{flash}{body}</main>
+<main id="main">
+  <div class="advisory" role="note">
+    <span class="mark" aria-hidden="true">i</span>
+    <span><strong>Advisory decision support.</strong> AI flags and suggestions do <strong>not</strong> make statutory procurement decisions.
+    Authorized humans (BAC/TWG/HOPE/Inspection/Accounting as applicable) must review the evidence and record/sign official determinations through the governed workflow.</span>
+  </div>
+  {flash}{body}
+</main>
+<footer class="site-footer">
+  <div class="site-footer-inner">
+    <span><strong>ProcEMP</strong> prototype · dual regime RA 12009 / RA 9184 (transitory)</span>
+    <span>Loopback-only prototype · not for official determinations · named human bodies decide and sign</span>
+  </div>
+</footer>
 </body></html>"""
 
 
 def render_index(conn, params, message=None, error=None, auth_token=None):
     status = params.get("status") or None
+    if status not in (None, "OPEN", "CLAIMED", "ESCALATED", "RESOLVED"):
+        status = None
     dash = queue_dashboard(conn)
     items = list_queue(conn, status=status, limit=200)["items"]
+
+    def link(label, value):
+        on = " on" if status == value or (value is None and status is None) else ""
+        href = "/" if value is None else f"/?status={value}"
+        return f"<a class='{on.strip()}' href='{href}'>{label}</a>"
+
+    seg = f"<div class='filters' role='group' aria-label='Filter queue by status'>" + "".join([
+        link("All", None),
+        link("Open", "OPEN"),
+        link("Claimed", "CLAIMED"),
+        link("Escalated", "ESCALATED"),
+        link("Resolved", "RESOLVED"),
+    ]) + "</div>"
+
     rows = []
     for it in items:
         rows.append(
             "<tr>"
-            f"<td><a href='/item?id={esc(it['id'])}'>{esc(it['id'][:8])}</a></td>"
-            f"<td>{esc(it.get('tx_number') or it.get('tx_id'))}</td>"
+            f"<td><a class='mono' href='/item?id={esc(it['id'])}'>{esc(it['id'][:8])}</a></td>"
+            f"<td class='mono'>{esc(it.get('tx_number') or it.get('tx_id'))}</td>"
             f"<td><span class='badge {esc((it.get('decision') or '').lower())}'>{esc(it.get('decision'))}</span></td>"
-            f"<td>{esc(it.get('confidence'))}</td>"
-            f"<td><span class='badge {esc(it['status'].lower())}'>{esc(it['status'])}</span> <span class='badge'>{esc(it['reason'])}</span></td>"
-            f"<td>{esc(it.get('missing_documents'))}</td><td>{esc(it.get('invalid_documents'))}</td>"
-            f"<td>{esc(it.get('assigned_to') or '')}</td>"
+            f"<td class='num'>{esc(it.get('confidence'))}</td>"
+            f"<td><span class='badge {esc(it['status'].lower())}'>{esc(it['status'])}</span>&nbsp;<span class='badge low'>{esc(it['reason'])}</span></td>"
+            f"<td class='col-optional'><span class='badge {esc((it.get('priority') or '').lower())}'>{esc(it.get('priority'))}</span></td>"
+            f"<td class='small'>{esc(it.get('missing_documents'))}</td><td class='small col-optional'>{esc(it.get('invalid_documents'))}</td>"
+            f"<td class='col-optional'>{esc(it.get('assigned_to') or '—')}</td>"
             "</tr>"
         )
     table = (
-        "<table><thead><tr><th>Item</th><th>Tx</th><th>Decision</th><th>Conf.</th><th>Status/Reason</th><th>Missing</th><th>Invalid</th><th>Assigned</th></tr></thead>"
-        f"<tbody>{''.join(rows) or '<tr><td colspan=8 class=muted>No items.</td></tr>'}</tbody></table>"
+        "<div class='table-wrap'><table><thead><tr><th>Item</th><th>Tx</th><th>Decision</th>"
+        "<th class='num'>Conf.</th><th>Status / Reason</th><th class='col-optional'>Priority</th>"
+        "<th>Missing</th><th class='col-optional'>Invalid</th><th class='col-optional'>Assigned</th></tr></thead>"
+        f"<tbody>{''.join(rows) or '<tr><td colspan=9 class=\"empty\">No items match this filter.</td></tr>'}</tbody></table></div>"
     )
     body = f"""
-    <div class="cards">
-      <div class="card"><div class="muted">Open</div><div class="num">{dash['open_items']}</div></div>
-      <div class="card"><div class="muted">Claimed</div><div class="num">{dash['claimed_items']}</div></div>
-      <div class="card"><div class="muted">Escalated</div><div class="num">{dash['escalated_items']}</div></div>
-      <div class="card"><div class="muted">Resolved</div><div class="num">{dash['resolved_items']}</div></div>
+    <div class="page-head">
+      <div>
+        <h1>Review queue</h1>
+        <p>AI-flagged verdicts awaiting human attention — advisory only, never a statutory determination.</p>
+      </div>
+      {seg}
     </div>
-    <section><h2>Queue {esc(f'(status={status})' if status else '')}</h2>{table}</section>
-    <form class="panel" method="get" action="/">{_token_field(auth_token)}<label>Filter status</label>
-      <select name="status"><option value="">All</option>
-      {"".join(f'<option {"selected" if status==s else ""}>{s}</option>' for s in ['OPEN','CLAIMED','ESCALATED','RESOLVED'])}
-      </select><button type="submit">Apply</button></form>
+
+    <div class="stat-grid" aria-label="Queue summary">
+      <div class="stat stat-open"><div class="label">Open</div><div class="num">{dash['open_items']}</div><div class="cap">Awaiting human review</div></div>
+      <div class="stat stat-claimed"><div class="label">Claimed</div><div class="num">{dash['claimed_items']}</div><div class="cap">Being reviewed now</div></div>
+      <div class="stat stat-escalated"><div class="label">Escalated</div><div class="num">{dash['escalated_items']}</div><div class="cap">Requires higher-level review</div></div>
+      <div class="stat stat-resolved"><div class="label">Resolved</div><div class="num">{dash['resolved_items']}</div><div class="cap">Review complete (advisory)</div></div>
+    </div>
+
+    <section class="card">
+      <div class="card-head"><h2>Items</h2><span class="count-chip">{len(items)} shown</span></div>
+      {table}
+    </section>
     """
-    return page("ProcEMP Advisory Review Queue", body, message, error)
+    return page("ProcEMP Advisory Review Queue", body, message, error, active="queue")
 
 
 ALL_ROLES = tuple(sorted(
@@ -208,13 +440,14 @@ def _citations_table(conn, tx_id, citations):
                 text = row["text"] or ""
                 passage = (text[:300] + ("…" if len(text) > 300 else ""))
             ok, reason = rag.verify(c, tx_id)
-            status = f"{'verified' if ok else 'FAILED: ' + reason}"
+            status = ('<span class="badge pass">verified</span>' if ok
+                      else f'<span class="badge fail">FAILED: {esc(reason)}</span>')
         else:
-            status = "unverified — no chunk_id"
+            status = '<span class="badge low">unverified — no chunk_id</span>'
         rows_html.append(
             f"<tr><td>{esc(c.get('section'))}</td>"
             f"<td>{esc(c.get('chunk_id') or '—')}</td>"
-            f"<td>{esc(passage or '—')}</td><td>{esc(status)}</td></tr>"
+            f"<td>{esc(passage or '—')}</td><td>{status}</td></tr>"
         )
     return (
         "<table><thead><tr><th>Cited section</th><th>Chunk</th>"
@@ -247,92 +480,142 @@ def _events_table(conn, tx_id, limit=50):
 def render_item(conn, item_id, message=None, error=None, auth_token=None):
     it = get_item(conn, item_id)
     v = it.get("verdict") or {}
-    actions_html = "".join(
-        f"<li>{esc(a['created_at'])} — <strong>{esc(a['action'])}</strong> by {esc(a['actor_id'])} ({esc(a['actor_role'])}) {esc(a.get('note') or '')}"
-        f"<pre>{esc(canonical(a.get('payload'))) }</pre></li>" for a in it.get("actions") or []
-    ) or "<li class='muted'>No actions yet.</li>"
+    actions_items = []
+    for a in it.get("actions") or []:
+        item = (f"<li><span class='mono'>{esc(a['created_at'])}</span> — <strong>{esc(a['action'])}</strong>"
+                f" by {esc(a['actor_id'])} ({esc(a['actor_role'])})")
+        if a.get('note'):
+            item += f"<div class='small muted'>{esc(a['note'])}</div>"
+        item += f"<pre>{esc(canonical(a.get('payload')))}</pre></li>"
+        actions_items.append(item)
+    actions_html = "".join(actions_items) or "<li class='muted'>No actions yet.</li>"
+    tx_number = esc(it.get('tx_number') or it.get('tx_id'))
     body = f"""
-    <section>
-      <h2>Item {esc(it['id'])}</h2>
-      <p><strong>Tx:</strong> {esc(it.get('tx_number') or it['tx_id'])} | <strong>Mode/Stage:</strong> {esc(it.get('tx_mode'))}/{esc(it.get('tx_stage'))}
-         | <strong>Status:</strong> <span class='badge {esc(it['status'].lower())}'>{esc(it['status'])}</span>
-         | <strong>Reason:</strong> {esc(it['reason'])} | <strong>Priority:</strong> {esc(it['priority'])}
-         | <strong>Assigned:</strong> {esc(it.get('assigned_to') or '—')}</p>
-      <p><strong>Verdict:</strong> {esc(it['verdict_id'])} | <strong>Decision (advisory):</strong> <span class='badge {esc((v.get('decision') or '').lower())}'>{esc(v.get('decision'))}</span>
-         | <strong>Confidence:</strong> {esc(v.get('confidence'))} | <strong>Model:</strong> {esc(v.get('model_version'))}</p>
-      <p><strong>Missing:</strong> {esc(v.get('missing_documents'))} | <strong>Invalid:</strong> {esc(v.get('invalid_documents'))}</p>
-      <div class="notice"><strong>Suggested next step (advisory):</strong> Verify evidence and source documents, then record an advisory action. Any statutory determination requires the authorized human body and governed sign-off.</div>
-      <h3>Provenance (advisory lineage)</h3>
-      <p><strong>Regime/Ruleset:</strong> {esc(it.get('tx_regime'))} / {esc(v.get('ruleset_version'))}
-         | <strong>Corpus snapshot:</strong> {esc(v.get('corpus_snapshot_id'))}
-         | <strong>Prompt hash:</strong> <code>{esc(v.get('prompt_hash'))}</code>
-         | <strong>Rules engine:</strong> {esc(v.get('rules_engine_version'))}</p>
-      <h3>Evidence spans</h3>
-      <table><thead><tr><th>Field</th><th>Value</th><th>Page</th><th>Snippet</th></tr></thead><tbody>
-      {''.join(f"<tr><td>{esc(s.get('field'))}</td><td>{esc(s.get('value'))}</td><td>{esc(s.get('page',''))}</td><td>{esc(s.get('snippet',''))}</td></tr>" for s in (v.get('evidence_spans') or []) if isinstance(s, dict)) or '<tr><td colspan=4 class="muted">No evidence spans on this verdict.</td></tr>'}
-      </tbody></table>
-      <details open><summary>Notes</summary><pre>{esc(canonical(v.get('notes', [])))}</pre></details>
-      <h3>Rule citations (passage + verification)</h3>
-      {_citations_table(conn, it["tx_id"], v.get("rule_citations", []))}
-      <details><summary>Rule citations (raw JSON)</summary><pre>{esc(canonical(v.get('rule_citations', [])))}</pre></details>
-      <h3>Ingested documents (metadata only, sealed-bid custody enforced)</h3>
-      {_documents_table(conn, it["tx_id"])}
-      <h3>Ledger timeline (advisory audit trail)</h3>
-      {_events_table(conn, it["tx_id"])}
-      <details><summary>Full verdict payload</summary><pre>{esc(canonical(v))}</pre></details>
-      <h3>Recorded actions</h3><ul>{actions_html}</ul>
-    </section>
-    {_role_datalist()}
-    <div class="grid">
-      <form class="panel" method="post" action="/action">{_token_field(auth_token)}
-        <h3>Claim</h3><input type="hidden" name="action" value="claim"><input type="hidden" name="item_id" value="{esc(item_id)}">
-        <label>Actor ID (named human)</label><input name="actor_id" required>
-        <label>Role</label><input name="actor_role" value="BAC_MEMBER" list="roles">
-        <label>Note</label><textarea name="note"></textarea><button type="submit">Claim item</button>
-        <p class="muted">{esc(_allowed_hint("CLAIM"))}</p>
-      </form>
-      <form class="panel" method="post" action="/action">{_token_field(auth_token)}
-        <h3>Advisory recommendation</h3><input type="hidden" name="action" value="recommend"><input type="hidden" name="item_id" value="{esc(item_id)}">
-        <label>Actor ID</label><input name="actor_id" required>
-        <label>Role</label><input name="actor_role" value="BAC_MEMBER" list="roles">
-        <label>Recommendation</label><select name="recommendation">{"".join(f'<option>{r}</option>' for r in sorted(ADVISORY_RECOMMENDATIONS))}</select>
-        <label>Note</label><textarea name="note"></textarea><button type="submit">Record recommendation</button>
-        <p class="muted">{esc(_allowed_hint("RECOMMEND_REVIEW"))} (per recommendation)</p>
-      </form>
-      <form class="panel" method="post" action="/action">{_token_field(auth_token)}
-        <h3>Resolve (advisory workflow)</h3><input type="hidden" name="action" value="resolve"><input type="hidden" name="item_id" value="{esc(item_id)}">
-        <label>Actor ID</label><input name="actor_id" required>
-        <label>Role</label><input name="actor_role" value="BAC_MEMBER" list="roles">
-        <label>Resolution</label><input name="resolution" value="ADVISORY_REVIEW_COMPLETE" required>
-        <label>Note</label><textarea name="note"></textarea><button type="submit">Resolve item</button>
-        <p class="muted">{esc(_allowed_hint("RESOLVE"))}</p>
-      </form>
-      <form class="panel" method="post" action="/action">{_token_field(auth_token)}
-        <h3>Override → correction (training-eligible only after 2nd review)</h3>
-        <input type="hidden" name="action" value="override"><input type="hidden" name="item_id" value="{esc(item_id)}">
-        <label>Field path</label><input name="field_path" placeholder="documents.philgeps_registration.valid_until" required>
-        <label>AI value (JSON literal)</label><input name="ai_value" placeholder='"2025-01-01"' required>
-        <label>Correct value (JSON literal)</label><input name="correct_value" placeholder='"2027-01-01"' required>
-        <label>Reason</label><textarea name="reason" required></textarea>
-        <label>Submitted by (named human)</label><input name="submitted_by" required>
-        <label>Role</label><input name="actor_role" value="BAC_STAFF" list="roles">
-        <button type="submit">Submit correction (PENDING)</button>
-        <p class="muted">{esc(_allowed_hint("REQUEST_CORRECTION"))}</p>
-      </form>
-      <form class="panel" method="post" action="/action">{_token_field(auth_token)}
-        <h3>Adjudicate correction (second reviewer)</h3>
-        <input type="hidden" name="action" value="adjudicate"><input type="hidden" name="item_id" value="{esc(item_id)}">
-        <label>Correction ID</label><input name="correction_id" required>
-        <label>Decision</label><select name="decision"><option>ACCEPTED</option><option>REJECTED</option></select>
-        <label>Adjudicator (must differ from submitter)</label><input name="adjudicator" required>
-        <label>Role</label><input name="actor_role" value="SECOND_REVIEWER" list="roles">
-        <label>Note</label><textarea name="note"></textarea>
-        <button type="submit">Adjudicate</button>
-        <p class="muted">Allowed: {esc(", ".join(ADJUDICATE_ROLES))} (submitter can never self-adjudicate)</p>
-      </form>
+    <div class="crumb"><a href="/">Review queue</a> <span aria-hidden="true">›</span> Item <span class="mono">{esc(it['id'][:8])}</span></div>
+    <div class="item-title">
+      <h1>{tx_number}</h1>
+      <span class="badge {esc((v.get('decision') or '').lower())}">{esc(v.get('decision') or '—')} (advisory)</span>
+      <span class="badge {esc(it['status'].lower())}">{esc(it['status'])}</span>
+      <span class="badge {esc((it.get('priority') or '').lower())}">Priority {esc(it.get('priority'))}</span>
+      <span class="badge low">{esc(it['reason'])}</span>
     </div>
+
+    <div class="card meta section-gap">
+      <div><div class="k">Transaction</div><div class="v mono">{tx_number}</div></div>
+      <div><div class="k">Mode / Stage</div><div class="v">{esc(it.get('tx_mode'))} / {esc(it.get('tx_stage'))}</div></div>
+      <div><div class="k">Regime / Ruleset</div><div class="v">{esc(it.get('tx_regime'))} / <span class="mono">{esc(v.get('ruleset_version'))}</span></div></div>
+      <div><div class="k">Corpus snapshot</div><div class="v mono">{esc(v.get('corpus_snapshot_id'))}</div></div>
+      <div><div class="k">Model version</div><div class="v mono">{esc(v.get('model_version'))}</div></div>
+      <div><div class="k">Confidence</div><div class="v">{esc(v.get('confidence'))}</div></div>
+      <div><div class="k">Assigned to</div><div class="v">{esc(it.get('assigned_to') or '—')}</div></div>
+      <div><div class="k">Verdict</div><div class="v mono">{esc(it['verdict_id'][:16])}…</div></div>
+    </div>
+
+    <div class="advisory section-gap" role="note">
+      <span class="mark" aria-hidden="true">i</span>
+      <span><strong>Suggested next step (advisory):</strong> Verify the evidence and source documents, then record an advisory action.
+      Any statutory determination requires the authorized human body and governed sign-off.</span>
+    </div>
+
+    <div class="item-layout section-gap">
+      <div class="stack">
+        <section class="card">
+          <div class="card-head"><h2>Provenance (advisory lineage)</h2></div>
+          <div class="card-pad">
+            <dl class="dl-grid">
+              <dt>Prompt hash</dt><dd class="mono">{esc(v.get('prompt_hash'))}</dd>
+              <dt>Rules engine</dt><dd>{esc(v.get('rules_engine_version'))}</dd>
+              <dt>Missing</dt><dd>{esc(v.get('missing_documents'))}</dd>
+              <dt>Invalid</dt><dd>{esc(v.get('invalid_documents'))}</dd>
+              <dt>Item ID</dt><dd class="mono">{esc(it['id'])}</dd>
+            </dl>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h2>Evidence spans</h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Field</th><th>Value</th><th class="num">Page</th><th>Snippet</th></tr></thead><tbody>
+          {''.join(f"<tr><td><span class='mono'>{esc(s.get('field'))}</span></td><td>{esc(s.get('value'))}</td><td class='num'>{esc(s.get('page',''))}</td><td>{esc(s.get('snippet',''))}</td></tr>" for s in (v.get('evidence_spans') or []) if isinstance(s, dict)) or '<tr><td colspan=4 class="empty">No evidence spans on this verdict.</td></tr>'}
+          </tbody></table></div>
+        </section>
+
+        <details class="card card-pad"><summary>Notes</summary><pre>{esc(canonical(v.get('notes', [])))}</pre></details>
+
+        <section class="card">
+          <div class="card-head"><h2>Rule citations (passage + verification)</h2></div>
+          <div class="table-wrap">{_citations_table(conn, it["tx_id"], v.get("rule_citations", []))}</div>
+        </section>
+        <details class="card card-pad"><summary>Rule citations (raw JSON)</summary><pre>{esc(canonical(v.get('rule_citations', [])))}</pre></details>
+
+        <section class="card">
+          <div class="card-head"><h2>Ingested documents (metadata only, sealed-bid custody enforced)</h2></div>
+          <div class="table-wrap">{_documents_table(conn, it["tx_id"])}</div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h2>Ledger timeline (advisory audit trail)</h2></div>
+          <div class="table-wrap">{_events_table(conn, it["tx_id"])}</div>
+        </section>
+
+        <details class="card card-pad"><summary>Full verdict payload</summary><pre>{esc(canonical(v))}</pre></details>
+
+        <section class="card">
+          <div class="card-head"><h2>Recorded actions</h2></div>
+          <ul class="card-pad" style="list-style:none;margin:0">{actions_html}</ul>
+        </section>
+      </div>
+
+      <aside class="sidebar" aria-label="Advisory actions">
+        <div class="side-title">Advisory actions — named humans only</div>
+        <form class="action-card" method="post" action="/action">{_token_field(auth_token)}
+          <h3><span class="step">1</span>Claim</h3><input type="hidden" name="action" value="claim"><input type="hidden" name="item_id" value="{esc(item_id)}">
+          <label>Actor ID (named human)</label><input name="actor_id" required placeholder="e.g. bac-member-01">
+          <label>Role</label><input name="actor_role" value="BAC_MEMBER" list="roles">
+          <label>Note</label><textarea name="note" placeholder="Optional review note"></textarea><button class="btn" type="submit">Claim item</button>
+          <p class="hint">{esc(_allowed_hint("CLAIM"))}</p>
+        </form>
+        <form class="action-card" method="post" action="/action">{_token_field(auth_token)}
+          <h3><span class="step">2</span>Advisory recommendation</h3><input type="hidden" name="action" value="recommend"><input type="hidden" name="item_id" value="{esc(item_id)}">
+          <label>Actor ID</label><input name="actor_id" required placeholder="e.g. bac-member-01">
+          <label>Role</label><input name="actor_role" value="BAC_MEMBER" list="roles">
+          <label>Recommendation</label><select name="recommendation">{"".join(f'<option>{r}</option>' for r in sorted(ADVISORY_RECOMMENDATIONS))}</select>
+          <label>Note</label><textarea name="note"></textarea><button class="btn" type="submit">Record recommendation</button>
+          <p class="hint">{esc(_allowed_hint("RECOMMEND_REVIEW"))} (per recommendation)</p>
+        </form>
+        <form class="action-card" method="post" action="/action">{_token_field(auth_token)}
+          <h3><span class="step">3</span>Resolve (advisory workflow)</h3><input type="hidden" name="action" value="resolve"><input type="hidden" name="item_id" value="{esc(item_id)}">
+          <label>Actor ID</label><input name="actor_id" required placeholder="e.g. bac-member-01">
+          <label>Role</label><input name="actor_role" value="BAC_MEMBER" list="roles">
+          <label>Resolution</label><input name="resolution" value="ADVISORY_REVIEW_COMPLETE" required>
+          <label>Note</label><textarea name="note"></textarea><button class="btn" type="submit">Resolve item</button>
+          <p class="hint">{esc(_allowed_hint("RESOLVE"))}</p>
+        </form>
+        <form class="action-card" method="post" action="/action">{_token_field(auth_token)}
+          <h3><span class="step">4</span>Override → correction</h3><input type="hidden" name="action" value="override"><input type="hidden" name="item_id" value="{esc(item_id)}">
+          <label>Field path</label><input name="field_path" placeholder="documents.philgeps_registration.valid_until" required>
+          <label>AI value (JSON literal)</label><input name="ai_value" placeholder='"2025-01-01"' required>
+          <label>Correct value (JSON literal)</label><input name="correct_value" placeholder='"2027-01-01"' required>
+          <label>Reason</label><textarea name="reason" required placeholder="Why this value is wrong"></textarea>
+          <label>Submitted by (named human)</label><input name="submitted_by" required>
+          <label>Role</label><input name="actor_role" value="BAC_STAFF" list="roles">
+          <button class="btn" type="submit">Submit correction (PENDING)</button>
+          <p class="hint">{esc(_allowed_hint("REQUEST_CORRECTION"))} · training-eligible only after 2nd review</p>
+        </form>
+        <form class="action-card" method="post" action="/action">{_token_field(auth_token)}
+          <h3><span class="step">5</span>Adjudicate correction</h3><input type="hidden" name="action" value="adjudicate"><input type="hidden" name="item_id" value="{esc(item_id)}">
+          <label>Correction ID</label><input name="correction_id" required placeholder="submission id from the queue">
+          <label>Decision</label><select name="decision"><option>ACCEPTED</option><option>REJECTED</option></select>
+          <label>Adjudicator (must differ from submitter)</label><input name="adjudicator" required>
+          <label>Role</label><input name="actor_role" value="SECOND_REVIEWER" list="roles">
+          <label>Note</label><textarea name="note"></textarea>
+          <button class="btn btn-accent" type="submit">Adjudicate</button>
+          <p class="hint">Allowed: {esc(", ".join(ADJUDICATE_ROLES))} · submitter can never self-adjudicate</p>
+        </form>
+      </aside>
+    </div>
+    {_role_datalist()}
     """
-    return page(f"Review Item {it['id'][:8]}", body, message, error)
+    return page(f"Review Item {it['id'][:8]}", body, message, error, active="queue")
 
 
 def handle_post(conn, form):
@@ -432,16 +715,24 @@ def render_draft_form(result=None, error=None, auth_token=None):
             + _field("Total Bid (PHP)", "sup_bid_" + str(i), s.get("bid_amount", ""))
             + "</div>")
     body = f"""
-    <p class="muted">Drafts the full SVP chain (PR → RFQ → Minutes → Abstract →
-    Resolution → PO) with computed amounts and ledger-issued numbers.
-    Fail-closed: a words/figures mismatch, fund-cluster drift, award to a
-    non-lowest bidder or broken references <b>blocks PDF rendering</b>.
-    Supplier bid amounts are human-entered canvass data — the system never
-    invents prices. Every page is watermarked
-    <b>AI-ASSISTED DRAFT</b> — not an official form until approved and signed.</p>
+    <div class="page-head">
+      <div>
+        <h1>SVP drafting</h1>
+        <p>Transaction parameters in — the full SVP document chain out as watermarked, unsigned drafts.</p>
+      </div>
+      <span class="badge low">Fail-closed validation</span>
+    </div>
+    <div class="advisory">
+      <span class="mark" aria-hidden="true">i</span>
+      <span><strong>Drafts, never decisions.</strong> Drafts the full SVP chain (PR → RFQ → Minutes → Abstract →
+      Resolution → PO) with computed amounts and ledger-issued numbers. A words/figures mismatch,
+      fund-cluster drift, award to a non-lowest bidder or broken references <strong>blocks PDF rendering</strong>.
+      Supplier bid amounts are human-entered canvass data — the system never invents prices. Every page is
+      watermarked <strong>AI-ASSISTED DRAFT</strong> — not an official form until approved and signed.</span>
+    </div>
     <form method="post" action="/draft">{_token_field(auth_token)}
-      <div class="grid">
-        <fieldset class="panel"><legend>Transaction</legend>
+      <div class="two-col">
+        <fieldset class="step-card"><legend>Step 1 · Transaction</legend>
           {_field("Purpose / Project Title", "purpose", d["purpose"], required=True, size=60)}
           {_field("End User", "end_user", d["end_user"])}
           {_field("Office/Section", "office", d["office_section"])}
@@ -456,7 +747,7 @@ def render_draft_form(result=None, error=None, auth_token=None):
           {_field("Place of Delivery", "place", d["place_of_delivery"])}
           {_field("Payment Term", "payment_term", d["payment_term"], size=44)}
         </fieldset>
-        <fieldset class="panel"><legend>Officials (named humans)</legend>
+        <fieldset class="step-card"><legend>Step 2 · Officials (named humans)</legend>
           {_field("Requested by — Name", "req_name", req["name"], required=True)}
           {_field("Requested by — Designation", "req_desig", req["designation"], required=True)}
           {_field("Approved by — Name", "app_name", app["name"], required=True)}
@@ -467,7 +758,7 @@ def render_draft_form(result=None, error=None, auth_token=None):
           {_field("Accountant", "accountant", d["accountant"])}
         </fieldset>
       </div>
-      <fieldset class="panel"><legend>Items (PR lines — amounts are computed, never trusted)</legend>
+      <fieldset class="step-card"><legend>Step 3 · Items (PR lines — amounts are computed, never trusted)</legend>
         {_items_rows("item", 6, {i: {"stock_no": it.get("stock_no", ""),
                                      "description": it.get("description", ""),
                                      "unit": it.get("unit", ""),
@@ -475,7 +766,7 @@ def render_draft_form(result=None, error=None, auth_token=None):
                                      "unit_cost": it.get("unit_cost", "")}
                                   for i, it in enumerate(d["items"], start=1)})}
       </fieldset>
-      <fieldset class="panel"><legend>Canvass — supplier bids (human-entered; blank to skip award docs)</legend>
+      <fieldset class="step-card"><legend>Step 4 · Canvass — supplier bids (blank to skip award docs)</legend>
         {sup_html}
         <h3>Award (optional — quoted prices from the canvass)</h3>
         {_field("Awarded Supplier (must be the lowest bid)", "award_supplier", awd.get("supplier", ""))}
@@ -487,12 +778,12 @@ def render_draft_form(result=None, error=None, auth_token=None):
         should).</p>
         {_items_rows("awd", 6, awd_items)}
       </fieldset>
-      <fieldset class="panel"><legend>Audit (you — the named human requesting this draft)</legend>
+      <fieldset class="step-card"><legend>Step 5 · Audit — you, the named human requesting this draft</legend>
         {_field("Your Actor ID", "actor_id", "", required=True)}
         {_field("Your Role", "actor_role", "BAC_STAFF", required=True)}
         <label class="chk"><input type="checkbox" name="allow_invalid" value="1">
           Render even if validation fails (every page stamped with a violations banner)</label>
-        <button type="submit">Generate draft chain (6 PDFs)</button>
+        <button class="btn btn-accent" type="submit">Generate draft chain (6 PDFs)</button>
       </fieldset>
     </form>
     """
@@ -509,15 +800,16 @@ def render_draft_form(result=None, error=None, auth_token=None):
             notes_html = ("<p class='muted'>Advisory notes:</p><ul>"
                           + "".join(f"<li>{esc(n)}</li>" for n in result["notes"]) + "</ul>")
         body += f"""
-        <section class="panel">
+        <section class="card card-pad section-gap">
           <h2>Draft chain generated — {esc(result["pr"])} (watermarked, unsigned)</h2>
-          <p>Numbering: {esc(canonical(result["numbering"]))}</p>
+          <p>Numbering: <span class="mono">{esc(canonical(result["numbering"]))}</span></p>
           {viol_html}{notes_html}
-          <ul>{files_html}</ul>
+          <h3 style="margin-top:12px">Files</h3>
+          <ul style="list-style:none;padding:0;display:grid;gap:6px">{files_html}</ul>
           <p class="muted">A DRAFT_GENERATED event was recorded in the ledger for
           actor {esc(result["actor"])}.</p>
         </section>"""
-    return page("ProcEMP Drafting — SVP Document Chain", body, message=error and None, error=error)
+    return page("ProcEMP Drafting — SVP Document Chain", body, None, error, active="draft")
 
 
 def _f(form, key, default=""):
