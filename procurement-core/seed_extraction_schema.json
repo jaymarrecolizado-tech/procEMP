@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "model": {
     "base": "Qwen2.5-3B",
     "role": "document field extraction ONLY",
@@ -11,7 +11,110 @@
     "philgeps_registration": {"present": "bool", "valid_until": "date"},
     "omnibus_sworn_statement": {"present": "bool", "signed": "bool", "notarized": "bool"},
     "bid_securing_declaration": {"present": "bool", "signed": "bool"},
-    "financial_proposal": {"present": "bool", "amount": "number"}
+    "financial_proposal": {"present": "bool", "amount": "number"},
+    "purchase_request": {
+      "pr_number": "string",
+      "pr_date": "date",
+      "office_section": "string",
+      "responsibility_center_code": "string",
+      "fund_cluster": "string",
+      "items": "list",
+      "total_amount": "number",
+      "purpose": "string",
+      "requested_by": "string",
+      "requested_by_designation": "string",
+      "approved_by": "string",
+      "approved_by_designation": "string",
+      "funds_available": "bool"
+    },
+    "request_for_quotation": {
+      "rfq_number": "string",
+      "pr_number_ref": "string",
+      "project_title": "string",
+      "abc": "number",
+      "end_user": "string",
+      "mode_of_procurement": "string",
+      "delivery_period": "date",
+      "submission_deadline_date": "date",
+      "submission_deadline_time": "string",
+      "bac_secretariat_head": "string",
+      "contact_email": "string",
+      "required_documents": "list",
+      "items": "list"
+    },
+    "minutes_of_opening": {
+      "rfq_number_ref": "string",
+      "opening_date": "date",
+      "opening_time": "string",
+      "attendees": "list",
+      "supplier_bids": "list",
+      "items": "list",
+      "lcrb_supplier": "string"
+    },
+    "abstract_of_bids": {
+      "rfq_number_ref": "string",
+      "pr_number_ref": "string",
+      "abc": "number",
+      "end_user": "string",
+      "mode_of_procurement": "string",
+      "delivery_period": "date",
+      "canvass_date": "date",
+      "place_of_opening": "string",
+      "suppliers": "list",
+      "items": "list",
+      "lcrb_supplier": "string",
+      "awarded_total": "number"
+    },
+    "bac_resolution_award": {
+      "resolution_number": "string",
+      "project_title": "string",
+      "pr_number_ref": "string",
+      "abc": "number",
+      "mode_of_procurement": "string",
+      "opening_date": "date",
+      "awarded_supplier": "string",
+      "awarded_amount": "number",
+      "award_basis": "string",
+      "resolved_date": "date",
+      "signatories": "list",
+      "approved_by": "string"
+    },
+    "purchase_order": {
+      "po_number": "string",
+      "po_date": "date",
+      "supplier": "string",
+      "supplier_address": "string",
+      "supplier_tin": "string",
+      "mode_of_procurement": "string",
+      "place_of_delivery": "string",
+      "delivery_date": "date",
+      "payment_term": "string",
+      "items": "list",
+      "total_amount": "number",
+      "amount_in_words": "string",
+      "fund_cluster": "string",
+      "accountant": "string",
+      "ors_burs_number": "string"
+    }
+  },
+  "field_specs": {
+    "note": "Element shapes for list-typed fields (validated downstream by the deterministic checker, not by the extraction type system).",
+    "purchase_request.items": {
+      "stock_no": "string", "unit": "string", "description": "string",
+      "quantity": "number", "unit_cost": "number", "total_cost": "number"
+    },
+    "request_for_quotation.items": {
+      "item_no": "number", "unit": "string", "quantity": "number",
+      "description": "string", "abc_per_unit": "number"
+    },
+    "minutes_of_opening.attendees": {"name": "string", "role": "string"},
+    "minutes_of_opening.supplier_bids": {"supplier": "string", "bid_amount": "number"},
+    "abstract_of_bids.suppliers": {"supplier": "string", "bid_amount": "number"},
+    "bac_resolution_award.signatories": {"name": "string", "role": "string"},
+    "purchase_order.items": {
+      "stock_no": "string", "unit": "string", "description": "string",
+      "quantity": "number", "unit_cost": "number", "total_cost": "number"
+    }
   },
   "output_contract": {
     "description": "Strict JSON. Extra document keys or extra field keys are schema violations, not data to be passed through.",

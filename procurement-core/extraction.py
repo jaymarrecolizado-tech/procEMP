@@ -182,6 +182,7 @@ _TYPES = {
     "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
     "string": lambda v: isinstance(v, str),
     "date": lambda v: isinstance(v, str) and _is_iso_date(v),
+    "list": lambda v: isinstance(v, list),
 }
 
 

@@ -4,7 +4,7 @@ A working prototype of an AI-assisted government procurement system, built again
 **RA 12009 (New Government Procurement Act)** and its IRR, with dual-regime support
 for legacy **RA 9184 / 2016 IRR** transactions during the transitory period.
 
-> **Status:** all 10 build-order steps implemented · **187 tests passing** · stdlib-only ·
+> **Status:** all 10 build-order steps implemented · **206 tests passing** · stdlib-only ·
 > **prototype, not a deployable government system**. No model weights, embedding models,
 > official form bodies or production database are bundled. See [Before production](#before-production).
 
@@ -21,7 +21,7 @@ Requires Python 3.10+. No third-party packages.
 ```bash
 cd procurement-core
 
-# Run the full acceptance suite (187 tests)
+# Run the full acceptance suite (206 tests)
 python -m unittest discover -s tests -v
 
 # Run the end-to-end scenario (14 steps, prints each control firing)
@@ -35,6 +35,29 @@ in-memory SQLite database. It also regenerates `sample-dashboard.html` in this f
 (gitignored; open it in a browser to see the monitoring dashboard).
 
 No network calls are made by the tests or demo. No external AI/embedding API is used.
+
+---
+
+## SVP document drafting (AI-assisted, PDF output)
+
+Draft an entire Small Value Procurement document chain — Purchase Request →
+Request for Quotation → Minutes of Opening → Abstract of Bids/Canvass → BAC
+Resolution → Purchase Order — from transaction parameters:
+
+```bash
+cd procurement-core
+python svp_documents.py demo --out ./svp-output   # fictional end-to-end set (6 PDFs + manifest)
+python svp_documents.py words --amount 26100      # amount-in-words helper
+```
+
+Every value is computed, never invented: amounts from item lines, document numbers
+from the gap-free ledger numbering, and the chain is validated before rendering —
+a words-vs-figures mismatch, fund-cluster drift, award to a non-lowest bidder, or a
+broken date chain **blocks PDF output** (overridable with `--allow-invalid`, which
+stamps every page with a violations banner). Every rendered page carries an
+"AI-ASSISTED DRAFT" watermark: drafts are not official forms until named humans
+approve and sign. Supplier bid amounts are human-entered canvass data; the model
+never invents prices.
 
 ---
 
@@ -55,6 +78,9 @@ procurement-core/              Runnable prototype (Python stdlib only)
   extraction.py                OCR/extraction adapter — the Qwen2.5-3B plug-in point
   rag.py                       As-of retrieval + citation verification
   forms.py                     GPPB Res. 03-2025 form registry + deterministic drafting
+  svp_documents.py             SVP chain drafting: PR -> RFQ -> Minutes -> Abstract ->
+                               Resolution -> PO (fail-closed cross-doc validation)
+  pdf_writer.py                Stdlib-only PDF renderer (core fonts, deterministic)
   monitoring.py                Contract milestones, delay/LD/VO flags, HTML dashboard
   audit.py                     COA folder compile, WORM sealing, read-only verification
   coa_server.py                GET-only verification endpoint + offline CLI
@@ -80,7 +106,7 @@ procurement-core/              Runnable prototype (Python stdlib only)
   seed_forms.json              36 GPPB forms, Standard vs Recommended
   seed_corpus.json             13 verified official legal passages (verbatim excerpts)
   seed_extraction_schema.json  Typed extraction output contract
-  tests/                       187 tests (core + queue + tracks + hardening + migration)
+  tests/                       206 tests (core + queue + tracks + hardening + migration + svp_docs)
 ```
 
 ---
