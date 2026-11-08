@@ -4,7 +4,7 @@ A working prototype of an AI-assisted government procurement system, built again
 **RA 12009 (New Government Procurement Act)** and its IRR, with dual-regime support
 for legacy **RA 9184 / 2016 IRR** transactions during the transitory period.
 
-> **Status:** all 10 build-order steps implemented · **138 tests passing** · stdlib-only ·
+> **Status:** all 10 build-order steps implemented · **170 tests passing** · stdlib-only ·
 > **prototype, not a deployable government system**. No model weights, embedding models,
 > official form bodies or production database are bundled. See [Before production](#before-production).
 
@@ -21,7 +21,7 @@ Requires Python 3.10+. No third-party packages.
 ```bash
 cd procurement-core
 
-# Run the full acceptance suite (138 tests)
+# Run the full acceptance suite (170 tests)
 python -m unittest discover -s tests -v
 
 # Run the end-to-end scenario (14 steps, prints each control firing)
@@ -58,6 +58,7 @@ procurement-core/              Runnable prototype (Python stdlib only)
   monitoring.py                Contract milestones, delay/LD/VO flags, HTML dashboard
   audit.py                     COA folder compile, WORM sealing, read-only verification
   coa_server.py                GET-only verification endpoint + offline CLI
+  ops_tls.py                   Optional TLS/mTLS + defensive response headers
   learning.py                  Correction logging + human-gated retraining loop
   review_queue.py              Advisory BAC review queue (RBAC, HTML/JSON export)
   review_server.py             Loopback web UI (token auth, evidence viewer)
@@ -70,13 +71,14 @@ procurement-core/              Runnable prototype (Python stdlib only)
   model_adapter_server.py      Schema-constrained local-LLM adapter
   readiness_report.py          Seeds/registry readiness + fail-closed blockers
   ops_backup.py                Backup / verify / restore-drill / retention
+  ops_smoke.py                 Read-only deployment smoke check (runbook rehearsal)
   demo.py                      End-to-end scenario
   schema.sql                   SQLite schema (append-only triggers, immutability)
   seed_rules.json              Versioned rules for both legal regimes
   seed_forms.json              36 GPPB forms, Standard vs Recommended
   seed_corpus.json             13 verified official legal passages (verbatim excerpts)
   seed_extraction_schema.json  Typed extraction output contract
-  tests/                       138 tests (core + queue + tracks)
+  tests/                       170 tests (core + queue + tracks + hardening)
 ```
 
 ---
@@ -85,7 +87,7 @@ procurement-core/              Runnable prototype (Python stdlib only)
 
 | Step | Module | What it guarantees |
 |---|---|---|
-| 1 | `core.py` + `seed_rules.json` | Rules live in versioned data; each transaction pins its regime, ruleset and corpus snapshot immutably |
+| 1 | `core.py` + `seed_rules.json` | Rules live in versioned data; each transaction pins its regime, ruleset and corpus snapshot immutably; mode/award criterion must be in the verified rules (fail closed on unknown values) |
 | 2 | `core.py` numbering | Atomic, gap-free PR/RFQ/Resolution/PO numbers with void-with-reason |
 | 3 | `core.py` gates | Bid contents cannot be read before the recorded public opening; stage transitions need verifiable human sign-offs |
 | 4 | `checker.py` | Deterministic pass/fail; an unreadable scan abstains rather than disqualifying a bidder |
@@ -137,13 +139,14 @@ python coa_server.py verify-corpus  --db procurement.db
 python coa_server.py list-seals     --db procurement.db
 python coa_server.py export         --db procurement.db --seal-id <id> --out ./coa-package
 python coa_server.py seal           --db procurement.db --tx-id <id> --sealed-by <name>
-python coa_server.py serve          --db procurement.db --port 8090
+python coa_server.py serve          --db procurement.db --port 8090 [--auth-token TOKEN] [--tls-cert/--tls-key]
 ```
 
 Routes: `/health`, `/verify-chain`, `/verify-folder`, `/folder`, `/integrity`, `/list-seals`.
 `export` writes `package.json` + `MANIFEST.sha256` and refuses to produce a package if
 verification fails. For LAN access, put an authenticated reverse proxy in front — the
-server refuses non-loopback binds.
+server refuses non-loopback binds. Optional native TLS/mTLS (`ops_tls.py`) is available
+for host-to-host use; see `procurement-review/06-deployment-runbook.md` §1.1.
 
 ---
 

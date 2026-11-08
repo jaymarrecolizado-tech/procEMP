@@ -618,6 +618,9 @@ def main(argv=None):
     p.add_argument("correction_id")
     p.add_argument("--decision", required=True, choices=["ACCEPTED", "REJECTED"])
     p.add_argument("--adjudicator", required=True)
+    p.add_argument("--actor-role", default="SECOND_REVIEWER",
+                   choices=ADJUDICATE_ROLES,
+                   help="Adjudicator role (SoD still applies)")
     p.add_argument("--note", default="")
     p = sub.add_parser("resolve")
     p.add_argument("item_id")
@@ -672,7 +675,8 @@ def main(argv=None):
             )
         elif args.cmd == "adjudicate":
             out = adjudicate_override(conn, args.correction_id, args.decision,
-                                      args.adjudicator, args.note)
+                                      args.adjudicator, args.note,
+                                      actor_role=args.actor_role)
         elif args.cmd == "resolve":
             out = resolve_item(conn, args.item_id, args.actor_id, args.actor_role,
                                args.resolution, note=args.note)

@@ -2,9 +2,9 @@
 
 > **Advisory / not a legal opinion.** This worklist tracks fail-closed blockers and required confirmations.
 > Items marked **[HUMAN/EXTERNAL]** require BAC Secretariat, Legal, DPO, IT/Security, or GPPB/COA action — do **not** guess values.
-> Regenerate: `cd procurement-core && python readiness_report.py --format md` (or `--out ../procurement-review/readiness-latest.md`).
+> Regenerate: `cd procurement-core && python readiness_report.py --format worklist --out ../procurement-review/07-readiness-worklist.md`.
 
-**Generated from report:** 2026-11-08 (prototype). `ready_for_production` (data/config checks only): **false**.
+**Generated from report:** 2026-11-08T06:13:23+08:00 (prototype). `ready_for_production` (data/config checks only): **false**.
 
 ## 1. Transition policy / regime selection [HUMAN/EXTERNAL]
 - [ ] **Owner: Legal/BAC Secretariat.** Obtain/record GPPB guidance on RA 9184 vs RA 12009 applicability during the transitory period (IRR RA 12009 Sec. 113; GPPB Res. 03-2025 context noted in `seed_rules.json`).
@@ -12,15 +12,15 @@
 - [ ] When confirmed: update transition policy/rules data with named approver, authority citation, effective dates; keep versioned as-of behavior.
 
 ## 2. Unverified / placeholder rules (`seed_rules.json`) [HUMAN/EXTERNAL]
-Fail-closed impact: unverified rules cause `UnverifiedRuleError` unless explicitly overridden in controlled flows; placeholders must be confirmed before use.
+Fail-closed impact: Unverified rules cause UnverifiedRuleError unless explicitly overridden; placeholders must be confirmed before use. (15 verified / 5 unverified).
 
 | Ruleset | Key | Section ref | Action (confirm with authority; then update verified/value) | Status |
 |---|---|---|---|---|
-| `rs-ra9184-2016` | `CHECKLIST_AUTHORITY` | 2016 IRR Sec. 30 / eligibility checklist | Confirm legacy eligibility checklist authority; register approved checklist | [ ] |
-| `rs-ra9184-2016` | `MODES` | 2016 Revised IRR RA 9184 Sec. 48-53 | Confirm against consolidated 2016 IRR | [ ] |
-| `rs-ra9184-2016` | `SVP_THRESHOLD` | 2016 IRR Annex H Sec. 53.9 + GPPB threshold amendments | BAC Secretariat confirms applicable GPPB amendment in force on transaction date; populate exact value | [ ] |
-| `rs-ra9184-2016` | `SHOPPING_THRESHOLD` | 2016 IRR Annex H Sec. 52.1 | Confirm and populate | [ ] |
-| `rs-ra9184-2016` | `POSTING_DAYS_COMPETITIVE` | 2016 IRR Sec. 21.2 | Confirm (varies by ABC); populate | [ ] |
+| `rs-ra9184-2016` | `CHECKLIST_AUTHORITY` | 2016 IRR Sec. 30 / eligibility checklist | Legacy eligibility checklist must be confirmed before the checker can run on a legacy transaction. | [ ] |
+| `rs-ra9184-2016` | `MODES` | 2016 Revised IRR RA 9184 Sec. 48-53 | Confirm against consolidated 2016 IRR before use. | [ ] |
+| `rs-ra9184-2016` | `SVP_THRESHOLD` | 2016 IRR Annex H Sec. 53.9 + GPPB threshold amendments | Populate after BAC Secretariat confirms the applicable GPPB amendment in force on the transaction date. | [ ] |
+| `rs-ra9184-2016` | `SHOPPING_THRESHOLD` | 2016 IRR Annex H Sec. 52.1 | Populate after confirmation. | [ ] |
+| `rs-ra9184-2016` | `POSTING_DAYS_COMPETITIVE` | 2016 IRR Sec. 21.2 | Legacy posting periods vary by ABC; confirm. | [ ] |
 
 ## 3. Corpus (`seed_corpus.json`) [HUMAN/EXTERNAL]
 Snapshot: `corpus-ra12009-2025-02` — 14 chunks, 13 verified, 1 unverified. `verified=false` cannot produce verified citations (fail closed → ABSTAIN).
@@ -33,7 +33,7 @@ Snapshot: `corpus-ra12009-2025-02` — 14 chunks, 13 verified, 1 unverified. `ve
 36 forms total (14 STANDARD, 22 RECOMMENDED), **0 official bodies registered**. Release-ready legal form output is blocked; drafts remain structural/labelled.
 
 - [ ] **Owner: Authorized form custodian (named human).** Obtain official GPPB/agency-approved form bodies/files; compute/register hashes per `forms.py`/registry process; record who/when/authority.
-- [ ] **All 36 codes** currently missing official bodies (see readiness report JSON for full list): APP, PPMP, MMSF, PBD_GOODS, PBD_INFRA, PBD_CONSULTING, CONTRACT_FORM, OSS, BSD, PSD, BID_FORM, PRICE_SCHEDULE, TECHNICAL_PROPOSAL, FINANCIAL_PROPOSAL, RFQ_REI, ABSTRACT_OF_BIDS, NOTICE_OF_AWARD, STATEMENT_ONGOING_CONTRACTS, SINGLE_LARGEST_COMPLETED_CONTRACT, SUPPLEMENTAL_BID_BULLETIN, NOTICE_RENEWAL_CONTRACT, REQUEST_CERT_AGENCY_TO_AGENCY, NOTICE_EXTENSION_CONTRACT, NOTICE_TERMINATE_SHOW_CAUSE, NOTICE_POST_QUAL, OFFEROR_FORM_UNSOLICITED, CONFERMENT_ORIGINAL_OFFEROR, REJECTION_UNSOLICITED_OFFER, MOA_PROCUREMENT_AGENT, MOA_POOLED_PROCUREMENT, PROCUREMENT_MONITORING_REPORT, SUSPENSION_ORDER, BLACKLISTING_ORDER, EARLY_PROCUREMENT_COMPLIANCE, OBSERVERS_REPORT, CAPACITY_DEVELOPMENT_REPORT.
+- [ ] **36 codes** currently missing official bodies (see readiness report JSON for full list): APP, PPMP, MMSF, PBD_GOODS, PBD_INFRA, PBD_CONSULTING, CONTRACT_FORM, OSS, BSD, PSD, BID_FORM, PRICE_SCHEDULE, TECHNICAL_PROPOSAL, FINANCIAL_PROPOSAL, RFQ_REI, ABSTRACT_OF_BIDS, NOTICE_OF_AWARD, STATEMENT_ONGOING_CONTRACTS, SINGLE_LARGEST_COMPLETED_CONTRACT, SUPPLEMENTAL_BID_BULLETIN, NOTICE_RENEWAL_CONTRACT, REQUEST_CERT_AGENCY_TO_AGENCY, NOTICE_EXTENSION_CONTRACT, NOTICE_TERMINATE_SHOW_CAUSE, NOTICE_POST_QUAL, OFFEROR_FORM_UNSOLICITED, CONFERMENT_ORIGINAL_OFFEROR, REJECTION_UNSOLICITED_OFFER, MOA_PROCUREMENT_AGENT, MOA_POOLED_PROCUREMENT, PROCUREMENT_MONITORING_REPORT, SUSPENSION_ORDER, BLACKLISTING_ORDER, EARLY_PROCUREMENT_COMPLIANCE, OBSERVERS_REPORT, CAPACITY_DEVELOPMENT_REPORT
 - [ ] **GPPB online-form authorization:** confirm agency authorization before treating any system-generated/accomplished form as official (Res. 03-2025 caveat recorded in report).
 
 ## 5. External confirmations (production gate) [HUMAN/EXTERNAL]
@@ -44,7 +44,7 @@ Snapshot: `corpus-ra12009-2025-02` — 14 chunks, 13 verified, 1 unverified. `ve
 - [ ] Full verified legal/corpus scope for deployment.
 - [ ] Real model + benchmark + human-gated training path (no auto-deploy).
 
-## 6. Engineering follow-through (can proceed in codebase)
+## 6. Engineering follow-through (implemented in codebase)
 - [ ] Re-run `readiness_report.py` after each verified data change; keep diffs audited.
 - [ ] Add/maintain tests for any rule/corpus/form parsing or registry behavior changes.
 - [ ] Review server (Track C) hardening: authenticated reverse proxy/TLS for non-loopback, richer evidence viewers, runbooks — keep advisory/audited, preserve human gates.

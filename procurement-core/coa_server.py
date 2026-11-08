@@ -4,7 +4,18 @@ The HTTP surface is strictly GET-only and read-only: it recomputes hashes and
 returns reports, and never writes to the ledger. Bind to loopback by default;
 put an authenticated reverse proxy in front if COA needs LAN access.
 
+Authenticated access (Next — persistence/ops): `serve --auth-token TOKEN`
+(or COA_AUTH_TOKEN env). When set, every route except /health requires the
+token via `X-Auth-Token` header or `?token=`/`?auth_token=` query param
+(constant-time compare). The offline CLI (`verify-*`, `seal`, `export`)
+never needs a token — it is a local file operation.
+
+Optional TLS: `serve --tls-cert cert.pem --tls-key key.pem` (plus
+`--tls-client-ca ca.pem` for mutual TLS). Transport protection does not
+replace the token or human gates; the endpoint stays read-only.
+
   python coa_server.py serve --db procurement.db --port 8090
+  python coa_server.py serve --db procurement.db --port 8090 --auth-token TOKEN
   python coa_server.py verify-chain --db procurement.db
   python coa_server.py verify-folder --db procurement.db --seal-id <id>
   python coa_server.py verify-corpus --db procurement.db
@@ -16,13 +27,19 @@ put an authenticated reverse proxy in front if COA needs LAN access.
 from __future__ import annotations
 
 import argparse
+import hmac
 import ipaddress
 import json
+import os
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from core import CoreError, _connect, verify_chain
+from ops_tls import (
+    add_security_headers, add_tls_arguments, build_tls_context, scheme_for,
+    wrap_server,
+)
 from rag import verify_corpus_integrity
 from audit import (
     compile_folder, export_package, list_seals, seal_folder,
@@ -41,7 +58,19 @@ def _assert_loopback(host):
     raise CoreError(f"refusing to bind COA endpoint to non-loopback host: {host}")
 
 
-def handle(conn, target):
+def _authed(headers, params, auth_token):
+    """True when the request carries a matching token (or auth is disabled)."""
+    if auth_token is None:
+        return True
+    for key in ("token", "auth_token"):
+        provided = params.get(key) or ""
+        if provided and hmac.compare_digest(provided, auth_token):
+            return True
+    provided = (headers or {}).get("X-Auth-Token", "") or ""
+    return bool(provided) and hmac.compare_digest(provided, auth_token)
+
+
+def handle(conn, target, auth_token=None, headers=None):
     """Pure request handler — testable without opening a socket."""
     parsed = urllib.parse.urlparse(target)
     path = parsed.path.rstrip("/") or "/"
@@ -50,6 +79,9 @@ def handle(conn, target):
     if path == "/health":
         return 200, {"status": "ok", "service": "procurement-coa-verification",
                      "mode": "read-only"}
+    if not _authed(headers, params, auth_token):
+        return 401, {"error": "unauthorized",
+                     "hint": "provide X-Auth-Token header or ?token= (COA_AUTH_TOKEN)"}
     if path == "/verify-chain":
         try:
             from_seq = int(params.get("from", 1))
@@ -78,11 +110,12 @@ def handle(conn, target):
                                "/folder", "/integrity", "/list-seals"]}
 
 
-def make_handler(conn):
+def make_handler(conn, *, auth_token=None, tls=False):
     class COAHandler(BaseHTTPRequestHandler):
         def do_GET(self):
             try:
-                status, payload = handle(conn, self.path)
+                status, payload = handle(conn, self.path, auth_token=auth_token,
+                                         headers=self.headers)
             except Exception as exc:
                 status, payload = 500, {"error": str(exc)}
             body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
@@ -90,13 +123,16 @@ def make_handler(conn):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            add_security_headers(self.send_header, tls=tls)
             self.end_headers()
             self.wfile.write(body)
 
         def do_POST(self):
             body = json.dumps({"error": "read-only endpoint"}).encode("utf-8")
             self.send_response(405)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            add_security_headers(self.send_header, tls=tls)
             self.end_headers()
             self.wfile.write(body)
 
@@ -106,11 +142,24 @@ def make_handler(conn):
     return COAHandler
 
 
-def serve(conn, host="127.0.0.1", port=8090):
+def serve(conn, host="127.0.0.1", port=8090, *, auth_token=None,
+          tls_cert=None, tls_key=None, tls_client_ca=None):
     _assert_loopback(host)
-    server = HTTPServer((host, port), make_handler(conn))
-    print(f"COA read-only verification endpoint on http://{host}:{port}")
+    tls_context = build_tls_context(tls_cert, tls_key, tls_client_ca)
+    server = HTTPServer((host, port),
+                        make_handler(conn, auth_token=auth_token,
+                                     tls=tls_context is not None))
+    wrap_server(server, tls_context)
+    scheme = scheme_for(tls_context)
+    print(f"COA read-only verification endpoint on {scheme}://{host}:{port}")
     print("Routes: /health /verify-chain /verify-folder /folder /integrity /list-seals")
+    if tls_context is not None:
+        print("TLS ENABLED (TLS 1.2+)"
+              + ("; mutual TLS required (client certificate)." if tls_client_ca else "."))
+    if auth_token:
+        print("Shared-secret auth ENABLED (X-Auth-Token or ?token= required except /health).")
+    else:
+        print("WARNING: no auth token configured; loopback-only read-only prototype.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -127,6 +176,9 @@ def main(argv=None):
     p.add_argument("--db", required=True)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8090)
+    p.add_argument("--auth-token", default=os.environ.get("COA_AUTH_TOKEN"),
+                   help="Shared secret; falls back to COA_AUTH_TOKEN env")
+    add_tls_arguments(p, env_prefix="COA")
 
     p = sub.add_parser("verify-chain")
     p.add_argument("--db", required=True)
@@ -163,7 +215,9 @@ def main(argv=None):
     conn = _connect(args.db)
     try:
         if args.command == "serve":
-            serve(conn, args.host, args.port)
+            serve(conn, args.host, args.port, auth_token=args.auth_token,
+                  tls_cert=args.tls_cert, tls_key=args.tls_key,
+                  tls_client_ca=args.tls_client_ca)
             return 0
         if args.command == "verify-chain":
             result = verify_chain(conn, args.from_seq, args.to_seq)

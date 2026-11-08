@@ -17,6 +17,9 @@ Hardening (Track C):
 - RBAC: action/role checks are enforced in review_queue.require_role().
 - /export is disabled over HTTP (arbitrary file write risk); use the CLI
   `python review_queue.py export --out <path>` instead.
+- Optional TLS (ops_tls.py): --tls-cert/--tls-key, optional --tls-client-ca
+  for mutual TLS. Defensive headers (CSP, no-sniff, frame-deny, HSTS on TLS)
+  are sent on every response. Transport protection never replaces human gates.
 """
 
 from __future__ import annotations
@@ -32,8 +35,14 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from core import CoreError, _connect, canonical, now
+from ops_tls import (
+    add_security_headers, add_tls_arguments, build_tls_context, scheme_for,
+    wrap_server,
+)
+from rag import AsOfRAG
 from review_queue import (
-    ADVISORY_RECOMMENDATIONS, adjudicate_override, claim_item, export_queue_dashboard,
+    ADJUDICATE_ROLES, ADVISORY_RECOMMENDATIONS, ROLE_PERMISSIONS,
+    adjudicate_override, claim_item, export_queue_dashboard,
     get_item, list_queue, queue_dashboard, recommend, resolve_item,
     submit_override_correction,
 )
@@ -137,6 +146,98 @@ def render_index(conn, params, message=None, error=None, auth_token=None):
     return page("ProcEMP Advisory Review Queue", body, message, error)
 
 
+ALL_ROLES = tuple(sorted(
+    {role for roles in ROLE_PERMISSIONS.values() for role in roles}
+    | set(ADJUDICATE_ROLES)
+))
+
+
+def _allowed_hint(action):
+    return "Allowed: " + ", ".join(ROLE_PERMISSIONS.get(action, ()))
+
+
+def _role_datalist():
+    options = "".join(f'<option value="{esc(role)}"></option>' for role in ALL_ROLES)
+    return f'<datalist id="roles">{options}</datalist>'
+
+
+def _documents_table(conn, tx_id):
+    rows = conn.execute(
+        "SELECT id, artifact_class, content_hash, ingested_at, opening_seq "
+        "FROM document WHERE tx_id=? ORDER BY ingested_at", (tx_id,)
+    ).fetchall()
+    if not rows:
+        return '<p class="muted">No documents ingested for this transaction.</p>'
+    rows_html = "".join(
+        f"<tr><td>{esc(r['id'][:8])}</td><td>{esc(r['artifact_class'])}</td>"
+        f"<td><code>{esc((r['content_hash'] or '')[:16])}…</code></td>"
+        f"<td>{esc(r['ingested_at'])}</td><td>{esc(r['opening_seq'])}</td></tr>"
+        for r in rows
+    )
+    return (
+        "<table><thead><tr><th>Document</th><th>Artifact class</th>"
+        "<th>Content hash</th><th>Ingested at</th><th>Opening seq</th></tr></thead>"
+        f"<tbody>{rows_html}</tbody></table>"
+        "<p class=muted>Metadata only — bid content is never stored by this system; "
+        "sealed-bid custody is enforced at ingest (IRR Sec. 58).</p>"
+    )
+
+
+def _citations_table(conn, tx_id, citations):
+    if not citations:
+        return '<p class="muted">No rule citations on this verdict.</p>'
+    rag = AsOfRAG(conn)
+    rows_html = []
+    for c in citations:
+        c = c if isinstance(c, dict) else {}
+        chunk_id = c.get("chunk_id")
+        passage = ""
+        status = "—"
+        if chunk_id:
+            row = conn.execute(
+                "SELECT text, passage_hash FROM corpus_chunk WHERE chunk_id=?",
+                (chunk_id,),
+            ).fetchone()
+            if row:
+                text = row["text"] or ""
+                passage = (text[:300] + ("…" if len(text) > 300 else ""))
+            ok, reason = rag.verify(c, tx_id)
+            status = f"{'verified' if ok else 'FAILED: ' + reason}"
+        else:
+            status = "unverified — no chunk_id"
+        rows_html.append(
+            f"<tr><td>{esc(c.get('section'))}</td>"
+            f"<td>{esc(c.get('chunk_id') or '—')}</td>"
+            f"<td>{esc(passage or '—')}</td><td>{esc(status)}</td></tr>"
+        )
+    return (
+        "<table><thead><tr><th>Cited section</th><th>Chunk</th>"
+        "<th>Passage (excerpt)</th><th>Verification</th></tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody></table>"
+    )
+
+
+def _events_table(conn, tx_id, limit=50):
+    rows = conn.execute(
+        "SELECT seq, event_type, actor_id, actor_role, occurred_at "
+        "FROM ledger_event WHERE tx_id=? ORDER BY seq DESC LIMIT ?",
+        (tx_id, limit),
+    ).fetchall()
+    if not rows:
+        return '<p class="muted">No ledger events for this transaction.</p>'
+    rows_html = "".join(
+        f"<tr><td>{esc(r['seq'])}</td><td>{esc(r['event_type'])}</td>"
+        f"<td>{esc(r['actor_id'])}</td><td>{esc(r['actor_role'])}</td>"
+        f"<td>{esc(r['occurred_at'])}</td></tr>"
+        for r in reversed(rows)
+    )
+    return (
+        "<table><thead><tr><th>Seq</th><th>Event</th><th>Actor</th>"
+        "<th>Role</th><th>At</th></tr></thead>"
+        f"<tbody>{rows_html}</tbody></table>"
+    )
+
+
 def render_item(conn, item_id, message=None, error=None, auth_token=None):
     it = get_item(conn, item_id)
     v = it.get("verdict") or {}
@@ -165,30 +266,40 @@ def render_item(conn, item_id, message=None, error=None, auth_token=None):
       {''.join(f"<tr><td>{esc(s.get('field'))}</td><td>{esc(s.get('value'))}</td><td>{esc(s.get('page',''))}</td><td>{esc(s.get('snippet',''))}</td></tr>" for s in (v.get('evidence_spans') or []) if isinstance(s, dict)) or '<tr><td colspan=4 class="muted">No evidence spans on this verdict.</td></tr>'}
       </tbody></table>
       <details open><summary>Notes</summary><pre>{esc(canonical(v.get('notes', [])))}</pre></details>
-      <details open><summary>Rule citations</summary><pre>{esc(canonical(v.get('rule_citations', [])))}</pre></details>
+      <h3>Rule citations (passage + verification)</h3>
+      {_citations_table(conn, it["tx_id"], v.get("rule_citations", []))}
+      <details><summary>Rule citations (raw JSON)</summary><pre>{esc(canonical(v.get('rule_citations', [])))}</pre></details>
+      <h3>Ingested documents (metadata only, sealed-bid custody enforced)</h3>
+      {_documents_table(conn, it["tx_id"])}
+      <h3>Ledger timeline (advisory audit trail)</h3>
+      {_events_table(conn, it["tx_id"])}
       <details><summary>Full verdict payload</summary><pre>{esc(canonical(v))}</pre></details>
       <h3>Recorded actions</h3><ul>{actions_html}</ul>
     </section>
+    {_role_datalist()}
     <div class="grid">
       <form class="panel" method="post" action="/action">{_token_field(auth_token)}
         <h3>Claim</h3><input type="hidden" name="action" value="claim"><input type="hidden" name="item_id" value="{esc(item_id)}">
         <label>Actor ID (named human)</label><input name="actor_id" required>
-        <label>Role</label><input name="actor_role" value="BAC_MEMBER">
+        <label>Role</label><input name="actor_role" value="BAC_MEMBER" list="roles">
         <label>Note</label><textarea name="note"></textarea><button type="submit">Claim item</button>
+        <p class="muted">{esc(_allowed_hint("CLAIM"))}</p>
       </form>
       <form class="panel" method="post" action="/action">{_token_field(auth_token)}
         <h3>Advisory recommendation</h3><input type="hidden" name="action" value="recommend"><input type="hidden" name="item_id" value="{esc(item_id)}">
         <label>Actor ID</label><input name="actor_id" required>
-        <label>Role</label><input name="actor_role" value="BAC_MEMBER">
+        <label>Role</label><input name="actor_role" value="BAC_MEMBER" list="roles">
         <label>Recommendation</label><select name="recommendation">{"".join(f'<option>{r}</option>' for r in sorted(ADVISORY_RECOMMENDATIONS))}</select>
         <label>Note</label><textarea name="note"></textarea><button type="submit">Record recommendation</button>
+        <p class="muted">{esc(_allowed_hint("RECOMMEND_REVIEW"))} (per recommendation)</p>
       </form>
       <form class="panel" method="post" action="/action">{_token_field(auth_token)}
         <h3>Resolve (advisory workflow)</h3><input type="hidden" name="action" value="resolve"><input type="hidden" name="item_id" value="{esc(item_id)}">
         <label>Actor ID</label><input name="actor_id" required>
-        <label>Role</label><input name="actor_role" value="BAC_MEMBER">
+        <label>Role</label><input name="actor_role" value="BAC_MEMBER" list="roles">
         <label>Resolution</label><input name="resolution" value="ADVISORY_REVIEW_COMPLETE" required>
         <label>Note</label><textarea name="note"></textarea><button type="submit">Resolve item</button>
+        <p class="muted">{esc(_allowed_hint("RESOLVE"))}</p>
       </form>
       <form class="panel" method="post" action="/action">{_token_field(auth_token)}
         <h3>Override → correction (training-eligible only after 2nd review)</h3>
@@ -198,8 +309,9 @@ def render_item(conn, item_id, message=None, error=None, auth_token=None):
         <label>Correct value (JSON literal)</label><input name="correct_value" placeholder='"2027-01-01"' required>
         <label>Reason</label><textarea name="reason" required></textarea>
         <label>Submitted by (named human)</label><input name="submitted_by" required>
-        <label>Role</label><input name="actor_role" value="BAC_STAFF">
+        <label>Role</label><input name="actor_role" value="BAC_STAFF" list="roles">
         <button type="submit">Submit correction (PENDING)</button>
+        <p class="muted">{esc(_allowed_hint("REQUEST_CORRECTION"))}</p>
       </form>
       <form class="panel" method="post" action="/action">{_token_field(auth_token)}
         <h3>Adjudicate correction (second reviewer)</h3>
@@ -207,8 +319,10 @@ def render_item(conn, item_id, message=None, error=None, auth_token=None):
         <label>Correction ID</label><input name="correction_id" required>
         <label>Decision</label><select name="decision"><option>ACCEPTED</option><option>REJECTED</option></select>
         <label>Adjudicator (must differ from submitter)</label><input name="adjudicator" required>
+        <label>Role</label><input name="actor_role" value="SECOND_REVIEWER" list="roles">
         <label>Note</label><textarea name="note"></textarea>
         <button type="submit">Adjudicate</button>
+        <p class="muted">Allowed: {esc(", ".join(ADJUDICATE_ROLES))} (submitter can never self-adjudicate)</p>
       </form>
     </div>
     """
@@ -241,7 +355,8 @@ def handle_post(conn, form):
         )
         return item_id, f"Correction submitted as PENDING ({corr['correction_id']}). Second reviewer must adjudicate before training eligibility."
     if action == "adjudicate":
-        res = adjudicate_override(conn, f("correction_id"), f("decision"), f("adjudicator"), f("note"))
+        res = adjudicate_override(conn, f("correction_id"), f("decision"), f("adjudicator"), f("note"),
+                                  actor_role=f("actor_role", "SECOND_REVIEWER"))
         return item_id, f"Correction adjudicated: {res['status']}."
     raise CoreError(f"unknown action: {action}")
 
@@ -257,6 +372,10 @@ def _query_authed(params, auth_token):
     return False
 
 
+# Advisory action forms are tiny; cap the request body to bound memory/DoS.
+MAX_POST_BYTES = 1024 * 1024
+
+
 def _check_auth(headers, auth_token):
     """Return True when unauthenticated access should be rejected.
 
@@ -269,7 +388,7 @@ def _check_auth(headers, auth_token):
     return not hmac.compare_digest(provided, auth_token)
 
 
-def make_handler(conn, *, auth_token=None):
+def make_handler(conn, *, auth_token=None, tls=False):
     class Handler(BaseHTTPRequestHandler):
         def _denied(self):
             self._send(401, page("Unauthorized",
@@ -282,6 +401,7 @@ def make_handler(conn, *, auth_token=None):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            add_security_headers(self.send_header, tls=tls)
             self.end_headers()
             self.wfile.write(data)
 
@@ -313,8 +433,21 @@ def make_handler(conn, *, auth_token=None):
 
         def do_POST(self):  # noqa: N802
             parsed = urllib.parse.urlparse(self.path)
+            raw = ""
             try:
-                length = int(self.headers.get("Content-Length", "0"))
+                if parsed.path != "/action":
+                    self._send(400, page("Error", "<p>Unknown POST path.</p>",
+                                         error="unknown POST path"))
+                    return
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                if length < 0:
+                    raise CoreError("invalid Content-Length")
+                if length > MAX_POST_BYTES:
+                    self._send(413, page(
+                        "Payload too large",
+                        f"<p>Request body exceeds {MAX_POST_BYTES} bytes.</p>",
+                        error="413 Payload too large"))
+                    return
                 raw = self.rfile.read(length).decode("utf-8") if length else ""
                 form = urllib.parse.parse_qs(raw)
                 if _check_auth(self.headers, auth_token):
@@ -325,13 +458,12 @@ def make_handler(conn, *, auth_token=None):
                             hmac.compare_digest(form_token, auth_token)):
                         self._denied()
                         return
-                if parsed.path != "/action":
-                    raise CoreError("unknown POST path")
                 item_id, msg = handle_post(conn, form)
                 loc = f"/item?id={urllib.parse.quote(item_id)}&msg={urllib.parse.quote(msg)}"
                 self.send_response(303)
                 self.send_header("Location", loc)
                 self.send_header("Content-Length", "0")
+                add_security_headers(self.send_header, tls=tls)
                 self.end_headers()
             except Exception as exc:
                 item_id = (urllib.parse.parse_qs(raw).get("item_id") or [""])[0] if 'raw' in locals() else ""
@@ -340,6 +472,7 @@ def make_handler(conn, *, auth_token=None):
                     self.send_response(303)
                     self.send_header("Location", loc)
                     self.send_header("Content-Length", "0")
+                    add_security_headers(self.send_header, tls=tls)
                     self.end_headers()
                 else:
                     self._send(400, page("Error", f"<pre>{esc(exc)}</pre>", error=str(exc)))
@@ -350,11 +483,20 @@ def make_handler(conn, *, auth_token=None):
     return Handler
 
 
-def serve(conn, host="127.0.0.1", port=8091, *, auth_token=None):
+def serve(conn, host="127.0.0.1", port=8091, *, auth_token=None,
+          tls_cert=None, tls_key=None, tls_client_ca=None):
     _assert_loopback(host)
-    server = ThreadingHTTPServer((host, port), make_handler(conn, auth_token=auth_token))
-    print(f"ProcEMP advisory review UI on http://{host}:{port} (loopback only)")
+    tls_context = build_tls_context(tls_cert, tls_key, tls_client_ca)
+    server = ThreadingHTTPServer((host, port),
+                                 make_handler(conn, auth_token=auth_token,
+                                              tls=tls_context is not None))
+    wrap_server(server, tls_context)
+    scheme = scheme_for(tls_context)
+    print(f"ProcEMP advisory review UI on {scheme}://{host}:{port} (loopback only)")
     print("Advisory only: authorized humans make statutory procurement decisions.")
+    if tls_context is not None:
+        print("TLS ENABLED (TLS 1.2+)"
+              + ("; mutual TLS required (client certificate)." if tls_client_ca else "."))
     if auth_token:
         print("Shared-secret auth ENABLED (X-Auth-Token required except /health).")
     else:
@@ -375,10 +517,13 @@ def main(argv=None):
     parser.add_argument("--port", type=int, default=8091)
     parser.add_argument("--auth-token", default=os.environ.get("REVIEW_AUTH_TOKEN"),
                         help="Shared secret; falls back to REVIEW_AUTH_TOKEN env")
+    add_tls_arguments(parser, env_prefix="REVIEW")
     args = parser.parse_args(argv)
     conn = _connect(args.db)
     try:
-        serve(conn, args.host, args.port, auth_token=args.auth_token)
+        serve(conn, args.host, args.port, auth_token=args.auth_token,
+              tls_cert=args.tls_cert, tls_key=args.tls_key,
+              tls_client_ca=args.tls_client_ca)
         return 0
     finally:
         conn.close()

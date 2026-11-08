@@ -7,6 +7,7 @@ It does NOT train a model and does NOT make procurement decisions.
 Use with an approved, non-confidential sample set. Keep data local/loopback.
 
 Examples:
+  python model_plumbing_check.py probe                # detect loopback runtimes (no data sent)
   python model_plumbing_check.py stub --port 8080
   python model_plumbing_check.py check --url http://127.0.0.1:8080/extract
   python model_plumbing_check.py check --url http://127.0.0.1:11434/api/generate  # not directly compatible
@@ -15,10 +16,13 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import statistics
 import threading
 import time
+import urllib.parse
+import urllib.request
 from http.server import ThreadingHTTPServer
 
 from core import canonical, now
@@ -110,6 +114,84 @@ def check_endpoint(url, *, schema=None, cases=None, model_version="qwen2.5-3b-pr
     return summary
 
 
+def _assert_loopback_url(url, label="endpoint"):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"{label} must be http(s): {url}")
+    host = parsed.hostname or ""
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return
+    except ValueError:
+        pass
+    raise ValueError(f"{label} refused (non-loopback): {host}")
+
+
+def _http_get(url, timeout=5):
+    """GET a URL; returns (status, latency_ms, body_snippet) or raises."""
+    _assert_loopback_url(url, "probe url")
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            return resp.status, round((time.time() - t0) * 1000, 1), body[:2000]
+    except Exception as exc:
+        raise RuntimeError(f"GET {url} failed: {exc}") from exc
+
+
+# Well-known loopback runtimes. Probe is GET-only health/tags discovery; no
+# procurement data is ever sent. Covers the runtimes named in plan.md.
+_RUNTIME_PROBES = [
+    ("ollama", "http://127.0.0.1:11434/api/tags"),
+    ("llama_cpp", "http://127.0.0.1:8080/health"),
+    ("llama_cpp", "http://127.0.0.1:8080/v1/models"),
+    ("vllm", "http://127.0.0.1:8000/v1/models"),
+    ("procemp_adapter", "http://127.0.0.1:8092/"),
+]
+
+
+def probe_runtimes(timeout=5, probes=None):
+    """Detect loopback model runtimes without sending any procurement data."""
+    results = []
+    for kind, url in (probes or _RUNTIME_PROBES):
+        row = {"kind": kind, "url": url, "reachable": False,
+               "status": None, "latency_ms": None, "detail": None, "error": None}
+        try:
+            status, latency, body = _http_get(url, timeout=timeout)
+            row["reachable"] = True
+            row["status"] = status
+            row["latency_ms"] = latency
+            try:
+                data = json.loads(body)
+                if kind == "ollama":
+                    row["detail"] = {
+                        "models": [
+                            m.get("model") or m.get("name")
+                            for m in (data.get("models") or [])
+                        ][:10],
+                    }
+                else:
+                    row["detail"] = {"body_keys": sorted(data.keys())[:10]
+                                     if isinstance(data, dict) else type(data).__name__}
+            except json.JSONDecodeError:
+                row["detail"] = {"body_preview": body[:120]}
+        except RuntimeError as exc:
+            row["error"] = str(exc)
+        results.append(row)
+    found = [r for r in results if r["reachable"]]
+    return {
+        "checked_at": now(),
+        "advisory_only": True,
+        "decision_making": False,
+        "data_sent": False,
+        "note": "Health/tags discovery only; no bid or sample data is transmitted.",
+        "reachable_count": len(found),
+        "results": results,
+    }
+
+
 def prompt_hint(schema=None):
     schema = schema or load_schema()
     return {
@@ -144,6 +226,10 @@ def main(argv=None):
 
     p = sub.add_parser("prompt-hint", help="Print instruction/response shape hints")
 
+    p = sub.add_parser("probe", help="Detect loopback model runtimes (GET-only, no data sent)")
+    p.add_argument("--timeout", type=int, default=5)
+    p.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
     if args.cmd == "stub":
         server, url = _start_stub(args.port)
@@ -166,6 +252,13 @@ def main(argv=None):
         return 0 if summary["transport_ok"] == summary["cases"] else 1
     if args.cmd == "prompt-hint":
         print(json.dumps(prompt_hint(), indent=2, ensure_ascii=False))
+        return 0
+    if args.cmd == "probe":
+        result = probe_runtimes(timeout=args.timeout)
+        if args.json:
+            print(canonical(result))
+        else:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
     raise SystemExit(2)
 

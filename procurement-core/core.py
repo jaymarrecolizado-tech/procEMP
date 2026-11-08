@@ -304,6 +304,46 @@ def get_rule(conn, resolved, key, allow_unverified=False):
     return entry["value"]
 
 
+def _normalize_posting_date(value):
+    """Require a real ISO date; a typo must not resolve a ruleset silently."""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    try:
+        return date.fromisoformat(str(value)).isoformat()
+    except (TypeError, ValueError) as exc:
+        raise CoreError(
+            f"posting_date must be an ISO date (YYYY-MM-DD), got {value!r}"
+        ) from exc
+
+
+def _validate_tx_context(resolved, mode, award_criterion):
+    """Fail closed when mode/award criterion are outside the verified rules.
+
+    Unverified rulesets (e.g. legacy RA 9184 placeholders) are not validated
+    here: their rules fail closed on read, and the transaction records the
+    legal officer's explicit regime choice. For verified rulesets the mode and
+    award criterion must match exactly — never a silent best guess.
+    """
+    if not mode or not isinstance(mode, str):
+        raise CoreError("mode is required (e.g. 'Competitive Bidding')")
+    modes = resolved["rules"].get("MODES")
+    if modes and modes["verified"] and mode not in modes["value"]:
+        raise CoreError(
+            f"mode '{mode}' is not a verified mode for {resolved['ruleset_version']} "
+            f"({modes['section_ref']}); allowed: {', '.join(modes['value'])}"
+        )
+    if award_criterion:
+        criteria = resolved["rules"].get("AWARD_CRITERIA")
+        if criteria and criteria["verified"] and award_criterion not in criteria["value"]:
+            raise CoreError(
+                f"award_criterion '{award_criterion}' is not verified for "
+                f"{resolved['ruleset_version']} ({criteria['section_ref']}); "
+                f"allowed: {', '.join(criteria['value'])}"
+            )
+
+
 # ---------------------------------------------------------------- numbering
 
 _issue_lock = threading.Lock()
@@ -363,10 +403,15 @@ def void_number(conn, number, reason, approver) -> None:
 
 def create_transaction(conn, *, regime, posting_date, mode, award_criterion=None,
                        drafter_id, legal_basis_note, number=None, stage="RECEIVING") -> str:
-    posting_date = posting_date.isoformat() if isinstance(posting_date, date) else str(posting_date)
+    posting_date = _normalize_posting_date(posting_date)
+    if not drafter_id:
+        raise CoreError("drafter_id is required: every draft must have a named human author")
     if not legal_basis_note:
         raise CoreError("legal_basis_note is required: a human must state why this regime applies")
+    if stage not in STAGES:
+        raise CoreError(f"unknown stage '{stage}' (valid: {', '.join(STAGES)})")
     resolved = resolve_rules(conn, posting_date, regime)
+    _validate_tx_context(resolved, mode, award_criterion)
     tx_id = uid()
     number = number or issue_number(conn, "PR", "RO2", int(posting_date[:4]))
     conn.execute(

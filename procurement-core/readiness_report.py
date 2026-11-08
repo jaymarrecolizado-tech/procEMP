@@ -149,6 +149,105 @@ def blockers(report):
     return b
 
 
+def render_worklist(report):
+    """Render the Track B worklist (07-readiness-worklist.md) from live data.
+
+    Regenerate with: python readiness_report.py --format worklist --out ... 
+    Every item is [HUMAN/EXTERNAL] unless it is an engineering follow-through;
+    values are never invented — the generator only restates audited state.
+    """
+    rules = report["rules"]
+    corpus = report["corpus"]
+    forms = report["forms"]
+    lines = [
+        "# Readiness Worklist (Track B) — derived from `readiness_report.py`",
+        "",
+        "> **Advisory / not a legal opinion.** This worklist tracks fail-closed blockers and required confirmations.",
+        "> Items marked **[HUMAN/EXTERNAL]** require BAC Secretariat, Legal, DPO, IT/Security, or GPPB/COA action — do **not** guess values.",
+        f"> Regenerate: `cd procurement-core && python readiness_report.py --format worklist --out ../procurement-review/07-readiness-worklist.md`.",
+        "",
+        f"**Generated from report:** {report['generated_at']} (prototype). `ready_for_production` (data/config checks only): **{str(report['ready_for_production']).lower()}**.",
+        "",
+        "## 1. Transition policy / regime selection [HUMAN/EXTERNAL]",
+        "- [ ] **Owner: Legal/BAC Secretariat.** Obtain/record GPPB guidance on RA 9184 vs RA 12009 applicability during the transitory period (IRR RA 12009 Sec. 113; GPPB Res. 03-2025 context noted in `seed_rules.json`).",
+        "- [ ] Until confirmed: `suggest_regime()` remains `AMBIGUOUS` where applicable; **legal officer must choose regime explicitly per transaction** with recorded `legal_basis_note`. Do not auto-select.",
+        "- [ ] When confirmed: update transition policy/rules data with named approver, authority citation, effective dates; keep versioned as-of behavior.",
+        "",
+        "## 2. Unverified / placeholder rules (`seed_rules.json`) [HUMAN/EXTERNAL]",
+        f"Fail-closed impact: {rules['fail_closed_impact']} ({rules['rules_verified']} verified / {len(rules['rules_unverified'])} unverified).",
+        "",
+        "| Ruleset | Key | Section ref | Action (confirm with authority; then update verified/value) | Status |",
+        "|---|---|---|---|---|",
+    ]
+    if rules["rules_unverified"]:
+        for r in rules["rules_unverified"]:
+            lines.append(
+                f"| `{r.get('ruleset_id')}` | `{r.get('key')}` | {r.get('section_ref')} | "
+                f"{r.get('note') or r.get('section_ref')} | [ ] |"
+            )
+    else:
+        lines.append("| — | — | — | all rules verified | [x] |")
+    lines += [
+        "",
+        "## 3. Corpus (`seed_corpus.json`) [HUMAN/EXTERNAL]",
+        f"Snapshot: `{corpus['corpus_snapshot_id']}` — {corpus['chunks_total']} chunks, "
+        f"{corpus['chunks_verified']} verified, {len(corpus['unverified_chunks'])} unverified. "
+        f"`verified=false` cannot produce verified citations (fail closed → ABSTAIN).",
+        "",
+    ]
+    if corpus["unverified_chunks"]:
+        for c in corpus["unverified_chunks"]:
+            lines.append(
+                f"- [ ] **Owner: Legal/BAC Secretariat.** Replace `{c.get('chunk_id')}` "
+                f"({c.get('regime')}, {c.get('section')}) with verified, verbatim/approved source text + metadata, "
+                "or keep excluded and document why legacy citations are unavailable."
+            )
+    else:
+        lines.append("- [x] All corpus chunks verified; continue expanding the verified set.")
+    lines += [
+        "- [ ] Expand to full verified GPPB/COA/issuance set needed for production scope; "
+        "create a new `corpus_snapshot_id` for approved changes (never silently repin transactions).",
+        "- [ ] Run corpus integrity/citation verification tests after updates.",
+        "",
+        "## 4. Official form bodies / hashes (`seed_forms.json`) [HUMAN/EXTERNAL]",
+        f"{forms['forms_total']} forms total "
+        f"({(forms.get('by_classification') or {}).get('STANDARD', 0)} STANDARD, "
+        f"{(forms.get('by_classification') or {}).get('RECOMMENDED', 0)} RECOMMENDED), "
+        f"**{forms['official_bodies_registered']} official bodies registered**. "
+        "Release-ready legal form output is blocked; drafts remain structural/labelled.",
+        "",
+        "- [ ] **Owner: Authorized form custodian (named human).** Obtain official GPPB/agency-approved "
+        "form bodies/files; compute/register hashes per `forms.py`/registry process; record who/when/authority.",
+        f"- [ ] **{len(forms['missing_official_bodies'])} codes** currently missing official bodies "
+        "(see readiness report JSON for full list): "
+        + (", ".join(f["code"] for f in forms["missing_official_bodies"]) if forms["missing_official_bodies"] else "none"),
+        "- [ ] **GPPB online-form authorization:** confirm agency authorization before treating any "
+        "system-generated/accomplished form as official (Res. 03-2025 caveat recorded in report).",
+        "",
+        "## 5. External confirmations (production gate) [HUMAN/EXTERNAL]",
+        "- [ ] DPIA/RA 10173/NPC obligations and approvals (see `05-data-governance-training.md`).",
+        "- [ ] E-signature basis (PNPKI/RA 8792) vs wet-ink procedure.",
+        "- [ ] PhilGEPS posting/API approach.",
+        "- [ ] GPPB authorization for online accomplishment of Standard Forms (as applicable).",
+        "- [ ] Full verified legal/corpus scope for deployment.",
+        "- [ ] Real model + benchmark + human-gated training path (no auto-deploy).",
+        "",
+        "## 6. Engineering follow-through (implemented in codebase)",
+        "- [ ] Re-run `readiness_report.py` after each verified data change; keep diffs audited.",
+        "- [ ] Add/maintain tests for any rule/corpus/form parsing or registry behavior changes.",
+        "- [ ] Review server (Track C) hardening: authenticated reverse proxy/TLS for non-loopback, "
+        "richer evidence viewers, runbooks — keep advisory/audited, preserve human gates.",
+        "- [ ] Extraction (Track A): only with approved/anonymized samples + local loopback runtime; "
+        "plumbing check before fine-tune; frozen-slice non-regression.",
+        "",
+        "## Definition of “data/config ready” (not legal sign-off)",
+        "`readiness_report` reports no fail-closed data blockers for the *checked* seeds/registry "
+        "and external confirmations are documented — **still requires legal/DPO/BAC/COA/governance "
+        "approvals before production use**.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def render_markdown(report):
     lines = [
         "# ProcEMP Readiness Report",
@@ -172,11 +271,16 @@ def render_markdown(report):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="ProcEMP readiness/audit report (advisory)")
     parser.add_argument("--db", help="Optional SQLite DB to include registry stats")
-    parser.add_argument("--format", choices=["json", "md"], default="json")
+    parser.add_argument("--format", choices=["json", "md", "worklist"], default="json")
     parser.add_argument("--out")
     args = parser.parse_args(argv)
     report = build_report(args.db)
-    text = render_markdown(report) if args.format == "md" else json.dumps(report, indent=2, ensure_ascii=False)
+    if args.format == "md":
+        text = render_markdown(report)
+    elif args.format == "worklist":
+        text = render_worklist(report)
+    else:
+        text = json.dumps(report, indent=2, ensure_ascii=False)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(text)

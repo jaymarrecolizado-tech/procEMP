@@ -6,8 +6,11 @@ transaction's posting date. "Latest" is never the default — a 2023 decision
 must be reproducible against the rules in force in 2023.
 
 Pure-stdlib BM25 + exact section-number boost. Dense retrieval is an optional
-pluggable backend (no embedding model is bundled). A citation is only
-`verified=true` when the chunk exists in the pinned snapshot, is verified, is
+pluggable backend (no embedding model is bundled): StubEmbedding (hashing,
+wiring tests) or TfidfEmbedding (deterministic TF-IDF prototype, intermediate
+step; swap for bge-m3/multilingual-e5 served locally in production). A citation
+is only `verified=true` when the chunk exists in the pinned snapshot, is
+verified, is
 not superseded, is in force on the posting date, and its passage hash is intact.
 """
 
@@ -70,6 +73,46 @@ class StubEmbedding(EmbeddingBackend):
         for token in tokenize(text):
             digest = hashlib.sha256(token.encode("utf-8")).digest()
             vec[int.from_bytes(digest[:8], "big") % self.dim] += 1.0
+        norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+        return [v / norm for v in vec]
+
+
+class TfidfEmbedding(EmbeddingBackend):
+    """Deterministic TF-IDF prototype — an intermediate step, NOT a neural
+    embedding. Better than the hashing stub for lexical variants (idf-weighted),
+    but still lexical/statistics only; swap for bge-m3/multilingual-e5 served
+    locally in production. Requires ``fit()`` on the corpus texts before use;
+    without fit, idf defaults to 1.0 (pure TF hashing). Deterministic: no
+    randomized hashing; vectors are L2-normalized for cosine comparison."""
+
+    def __init__(self, dim=128):
+        self.dim = dim
+        self.idf = {}
+        self.fitted = False
+
+    def fit(self, texts):
+        texts = texts or []
+        counts = {}
+        n = len(texts)
+        for text in texts:
+            for token in set(tokenize(text)):
+                counts[token] = counts.get(token, 0) + 1
+        self.idf = {
+            token: (math.log((n + 1) / (df + 1))) + 1.0
+            for token, df in counts.items()
+        }
+        self.fitted = n > 0
+        return self
+
+    def embed(self, text):
+        vec = [0.0] * self.dim
+        weight_by_idx = {}
+        for token in tokenize(text):
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            idx = int.from_bytes(digest[:8], "big") % self.dim
+            weight_by_idx[idx] = weight_by_idx.get(idx, 0.0) + self.idf.get(token, 1.0)
+        for idx, weight in weight_by_idx.items():
+            vec[idx] = weight
         norm = math.sqrt(sum(v * v for v in vec)) or 1.0
         return [v / norm for v in vec]
 
