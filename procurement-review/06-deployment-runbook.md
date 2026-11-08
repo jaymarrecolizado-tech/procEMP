@@ -137,3 +137,38 @@ Verifies the ledger hash chain, corpus passage hashes, seed/registry readiness
 the database or makes decisions; exit code 0 means every error-severity check
 passed — readiness blockers are reported but remain expected fail-closed state
 for the prototype.
+
+## 9. PostgreSQL migration scaffold (stdlib-only dump generator)
+
+Python's stdlib has no PostgreSQL driver, so the code-side migration path is a
+deterministic dump generator; the actual load/verify on PostgreSQL is an
+operator step on the approved target environment.
+
+```bash
+cd procurement-core
+
+# 1. verify the source before anything else (fail closed on chain/corpus/FK errors)
+python ops_migrate_pg.py verify-source --db procurement.db
+
+# 2. export the deterministic PostgreSQL dump (schema + data + manifest)
+python ops_migrate_pg.py export --db procurement.db --out pg-migration.sql
+
+# 3. self-check the dump (replays INSERTs into scratch SQLite, re-verifies chain)
+python ops_migrate_pg.py check-dump --db procurement.db --dump pg-migration.sql
+
+# 4. operator step — load on the approved PostgreSQL target
+psql "postgres://user@host/procemp" -1 -v ON_ERROR_STOP=1 -f pg-migration.sql
+```
+
+Notes:
+- The dump embeds `schema_pg.sql` (PostgreSQL DDL mirroring `schema.sql`;
+  parity is enforced by `tests/test_migration.py`). Append-only ledger,
+  immutable pinned fields, WORM sealed folders and frozen benchmarks are
+  enforced by PostgreSQL triggers, same as SQLite.
+- Ledger `seq`/`row_hash` are preserved byte-exactly and the identity sequence
+  is re-anchored with `setval`.
+- Post-load row counts are in the dump footer manifest; the commented
+  `SELECT ... UNION ALL` count query at the end of the dump runs as-is in psql.
+- Application-level chain re-verification on the PostgreSQL store needs a
+  driver-based verifier (external step) — the dump preserves hashes to make
+  that possible. Never edit a dump by hand; re-export instead.

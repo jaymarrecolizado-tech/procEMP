@@ -4,7 +4,7 @@ A working prototype of an AI-assisted government procurement system, built again
 **RA 12009 (New Government Procurement Act)** and its IRR, with dual-regime support
 for legacy **RA 9184 / 2016 IRR** transactions during the transitory period.
 
-> **Status:** all 10 build-order steps implemented · **170 tests passing** · stdlib-only ·
+> **Status:** all 10 build-order steps implemented · **187 tests passing** · stdlib-only ·
 > **prototype, not a deployable government system**. No model weights, embedding models,
 > official form bodies or production database are bundled. See [Before production](#before-production).
 
@@ -21,7 +21,7 @@ Requires Python 3.10+. No third-party packages.
 ```bash
 cd procurement-core
 
-# Run the full acceptance suite (170 tests)
+# Run the full acceptance suite (187 tests)
 python -m unittest discover -s tests -v
 
 # Run the end-to-end scenario (14 steps, prints each control firing)
@@ -72,13 +72,15 @@ procurement-core/              Runnable prototype (Python stdlib only)
   readiness_report.py          Seeds/registry readiness + fail-closed blockers
   ops_backup.py                Backup / verify / restore-drill / retention
   ops_smoke.py                 Read-only deployment smoke check (runbook rehearsal)
+  ops_migrate_pg.py            SQLite -> PostgreSQL migration dump (verify/export/check)
   demo.py                      End-to-end scenario
   schema.sql                   SQLite schema (append-only triggers, immutability)
+  schema_pg.sql                PostgreSQL schema (migration target, parity-tested)
   seed_rules.json              Versioned rules for both legal regimes
   seed_forms.json              36 GPPB forms, Standard vs Recommended
   seed_corpus.json             13 verified official legal passages (verbatim excerpts)
   seed_extraction_schema.json  Typed extraction output contract
-  tests/                       170 tests (core + queue + tracks + hardening)
+  tests/                       187 tests (core + queue + tracks + hardening + migration)
 ```
 
 ---
@@ -184,7 +186,9 @@ procedure; DPIA and NPC obligations under RA 10173; an agency instrument definin
 system as decision support; COA/DPO briefings and staff training.
 
 **Prototype stubs to replace:**
-SQLite → PostgreSQL; in-process ledger → WORM-backed store; `StubBackend` → the real
+SQLite → PostgreSQL (dump/export scaffold done: `ops_migrate_pg.py` + `schema_pg.sql`;
+psql load + target-side verification remain operator steps); in-process ledger →
+WORM-backed store; `StubBackend` → the real
 Qwen2.5-3B fine-tune served on loopback; `StubEmbedding` → `bge-m3` / `multilingual-e5`;
 13 seed passages → the full GPPB/COA/GPPB-circular corpus; placeholder legacy corpus →
 verified 2016 IRR text; synthetic benchmark cases → real historical cases with

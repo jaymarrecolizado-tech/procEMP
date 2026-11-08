@@ -5,7 +5,7 @@
 
 ## 1. Current status (prototype)
 
-All 10 build-order steps are implemented in `procurement-core/` (Python stdlib-only). **170 tests passing** (`cd procurement-core && python -m unittest discover -s tests -v`). See `README.md` and `procurement-review/01-revised-workflow-RA12009.md` §9.
+All 10 build-order steps are implemented in `procurement-core/` (Python stdlib-only). **187 tests passing** (`cd procurement-core && python -m unittest discover -s tests -v`). See `README.md` and `procurement-review/01-revised-workflow-RA12009.md` §9.
 
 | Area | Status | Key modules/files |
 |---|---|---|
@@ -35,7 +35,7 @@ All 10 build-order steps are implemented in `procurement-core/` (Python stdlib-o
 
 ### Implementation cross-check (2026-11-08)
 - **Result:** all `[x]` items in this plan are implemented as **prototype/scaffolding** consistent with their descriptions/caveats; all `[ ]` items remain not done and the implementation correctly reflects that (fail-closed blockers, no trained model weights/runtime in repo, no verified/approved seed content or official form hashes registered, no external/DPO/legal sign-offs, no production DB/WORM deployment — auth/TLS/review hardening are code-side only, still loopback/prototype). No item is falsely marked `[x]`.
-- **Evidence:** 170/170 tests passing (`test_core` 105, `test_queue` 17, `test_tracks` 16, `test_hardening` 32 — hardening covers COA auth, TF-IDF embeddings, worklist generator, runtime probe, richer viewers, TLS/header/fail-closed validation); key modules import (incl. new `ops_tls.py`, `ops_smoke.py`); `readiness_report.py` reports `ready_for_production:false` (advisory) with expected blockers tracked in `procurement-review/07-readiness-worklist.md`.
+- **Evidence:** 187/187 tests passing (`test_core` 105, `test_queue` 17, `test_tracks` 16, `test_hardening` 32, `test_migration` 17 — hardening covers COA auth, TF-IDF embeddings, worklist generator, runtime probe, richer viewers, TLS/header/fail-closed validation; migration covers PG schema parity, dump determinism/round-trip, fail-closed verification); key modules import (incl. new `ops_tls.py`, `ops_smoke.py`, `ops_migrate_pg.py`); `readiness_report.py` reports `ready_for_production:false` (advisory) with expected blockers tracked in `procurement-review/07-readiness-worklist.md`.
 - **Main remaining dependencies:** external/legal/DPO confirmations + verified official content (Track B), authenticated/rehearsed deployment (Track C/ops), and an approved local runtime + real anonymized samples + human-gated fine-tune/eval (Track A).
 
 ## 2. Product goals (assistant-first)
@@ -67,6 +67,7 @@ All 10 build-order steps are implemented in `procurement-core/` (Python stdlib-o
 - [x] **Read-only deployment smoke check (ops follow-through):** `procurement-core/ops_smoke.py` rehearses the runbook automatically — ledger chain, corpus passage hashes, seed/registry readiness (advisory) and optional loopback `/health` polling for the review UI/COA services. No writes, no decisions; non-loopback URLs are refused; exit 0 only when error-severity checks pass. Live target-environment rehearsal remains an operator step.
 - [x] **Fail-closed transaction context validation (guardrail hardening):** `core.create_transaction()` now rejects invalid ISO posting dates (typos can no longer resolve a ruleset silently), missing named drafters, unknown stages, and — for verified rulesets — any mode/award criterion outside the verified `MODES`/`AWARD_CRITERIA` rules. Unverified legacy rulesets remain creation-permitted (the legal officer records the regime choice) but still fail closed on rule read, so no threshold/checklist value is guessed.
 - [x] **Review action hardening (Track C follow-through):** the review UI caps POST bodies (1 MiB → `413`, bounding memory/DoS) and rejects unknown POST paths before reading a body; the `review_queue.py adjudicate` CLI exposes `--actor-role` with the adjudicator-role allowlist, matching the UI's RBAC/SoD enforcement.
+- [x] **PostgreSQL migration scaffold (Next, code-side; stdlib-only):** new `procurement-core/ops_migrate_pg.py` + `procurement-core/schema_pg.sql`. Python's stdlib has no PostgreSQL driver, so the scaffold is a deterministic dump generator: `verify-source` fail-closes on ledger-chain/corpus-hash/FK errors before export; `export` emits PostgreSQL DDL + FK-ordered, quote/unicode/float-exact INSERTs with byte-exact ledger `seq`/`row_hash` preservation and an identity `setval`; `check-dump` replays the dump into scratch SQLite and re-verifies counts + chain. Loading via `psql -1 -v ON_ERROR_STOP=1 -f …` and post-load verification on the target remain operator steps (runbook §9); `schema_pg.sql` parity with `schema.sql` is test-enforced (identity column, plpgsql immutability triggers, DOUBLE PRECISION). 17 new tests in `tests/test_migration.py`.
 
 ### Now (next 1–2 execution cycles)
 - [ ] **A. Extraction assistant (Qwen2.5-3B path) — code scaffolding done; external/real-data steps remain:** synthetic dataset plan (`dataset.py`), frozen-slice eval + calibration (`evaluation.py`), and training orchestration (`training_job.py`) are implemented and tested. **Still needed (external/approved environment only):** real anonymized/approved base samples (fields, confidence/evidence, `UNREADABLE` cases, Taglish/scans) with DPO/BAC sign-off; run a real loopback model runtime and validate with `model_plumbing_check.py`/`model_adapter_server.py` (no runtime detected in the current dev environment); QLoRA SFT train against `seed_extraction_schema.json`; confidence/abstention calibration on real samples; frozen-slice eval + per-slice non-regression *on the candidate* before any human promotion. **No fine-tuned weights in repo; no auto-deploy.**
@@ -80,7 +81,7 @@ All 10 build-order steps are implemented in `procurement-core/` (Python stdlib-o
 - [ ] Operate the real QLoRA training job in the approved GPU environment (orchestration wired to `learning.py` via `training_job.py`: batch creation, candidate registration, frozen benchmark evaluation) with human approval, canary, and rollback — **no auto-deploy**; the GPU job itself remains external.
 - [ ] Register official Res. 03-2025 form bodies (human-hashed) and validate generated drafts against required authorizations.
 - [ ] Expand corpus to full verified GPPB/COA/issuance set; resolve legacy-placeholder passages.
-- [ ] Move persistence toward production targets (PostgreSQL, WORM-backed append-only store); authenticated COA access path is implemented in `coa_server.py` (shared-secret loopback auth, proxy still recommended); backup/restore drills + retention schedule are implemented in `ops_backup.py` and need rehearsal on the target environment.
+- [ ] Move persistence toward production targets (PostgreSQL, WORM-backed append-only store): the migration scaffold is implemented (`ops_migrate_pg.py` verify/export/check-dump + `schema_pg.sql`); **still needed (operator/external):** psql load + post-load chain verification on an approved PostgreSQL environment, then switching the app's persistence; authenticated COA access path is implemented in `coa_server.py` (shared-secret loopback auth, proxy still recommended); backup/restore drills + retention schedule are implemented in `ops_backup.py` and need rehearsal on the target environment.
 
 ### Later
 - [ ] Full end-to-end pilot on a limited procurement mode with BAC Secretariat/legal oversight.
@@ -105,4 +106,4 @@ All 10 build-order steps are implemented in `procurement-core/` (Python stdlib-o
 - `procurement-review/05-data-governance-training.md` — training/correction governance (draft + appendices)
 - `procurement-review/06-deployment-runbook.md` — loopback services, queue ops, training, backups
 - `procurement-review/07-readiness-worklist.md` — Track B fail-closed blockers/worklist (regenerate with `readiness_report.py`)
-- `procurement-core/demo.py`, `procurement-core/tests/` — runnable scenario and 170 tests
+- `procurement-core/demo.py`, `procurement-core/tests/` — runnable scenario and 187 tests
