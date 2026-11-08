@@ -7,18 +7,26 @@ must be reproducible against the rules in force in 2023.
 
 Pure-stdlib BM25 + exact section-number boost. Dense retrieval is an optional
 pluggable backend (no embedding model is bundled): StubEmbedding (hashing,
-wiring tests) or TfidfEmbedding (deterministic TF-IDF prototype, intermediate
-step; swap for bge-m3/multilingual-e5 served locally in production). A citation
-is only `verified=true` when the chunk exists in the pinned snapshot, is
-verified, is
+wiring tests), TfidfEmbedding (deterministic TF-IDF prototype, intermediate
+step), or HTTPEmbedding (opt-in, loopback-only OpenAI-compatible
+/v1/embeddings; nomic-class English-leaning intermediate step, NOT the
+production embedding). bge-m3/multilingual-e5 served locally remain the
+production target. Retrieval stays deterministic-by-default; the neural
+backend never changes fail-closed citation verification. A citation is only
+`verified=true` when the chunk exists in the pinned snapshot, is verified, is
 not superseded, is in force on the posting date, and its passage hash is intact.
 """
 
 from __future__ import annotations
 
 import hashlib
+import ipaddress
+import json
 import math
+import os
 import re
+import urllib.parse
+import urllib.request
 from collections import Counter
 
 from core import (
@@ -117,6 +125,113 @@ class TfidfEmbedding(EmbeddingBackend):
         return [v / norm for v in vec]
 
 
+class HTTPEmbedding(EmbeddingBackend):
+    """Opt-in neural embeddings from a locally served model (no network).
+
+    OpenAI-compatible ``POST {url}`` with ``{"model": ..., "input": [texts...]}``
+    and a ``{"data": [{"embedding": [...]}, ...]}`` response — the contract
+    served by LM Studio / llama.cpp server / vLLM on loopback. Loopback only;
+    external endpoints are refused. Default remains deterministic (BM25/stub);
+    this backend is opt-in and vector ordering is server-dependent, so citation
+    verification (``AsOfRAG.verify``) is unchanged and stays authoritative.
+
+    Honest caveat: nomic-embed-text is English-leaning and this is still an
+    intermediate prototype, not the production embedding (bge-m3/multilingual-e5
+    served locally in a controlled environment). Requires a local server with the
+    model loaded — never bundles weights.
+    """
+
+    def __init__(self, url="http://127.0.0.1:1234/v1/embeddings",
+                 model="text-embedding-nomic-embed-text-v1.5",
+                 timeout=30, api_key=None):
+        _assert_loopback(url, "embedding endpoint")
+        self.url = url
+        self.model = model
+        self.timeout = timeout
+        self.api_key = api_key or os.environ.get("PROCEMP_EMBEDDING_API_KEY")
+        self._cache = {}
+
+    def embed(self, text):
+        return self.embed_batch([text])[0]
+
+    def embed_batch(self, texts):
+        texts = list(texts)
+        missing = [t for t in texts if t not in self._cache]
+        if missing:
+            vectors = self._request(missing)
+            for text, vec in zip(missing, vectors):
+                self._cache[text] = vec
+        return [self._cache[t] for t in texts]
+
+    @staticmethod
+    def _request_headers(api_key):
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        return headers
+
+    def _request(self, texts):
+        payload = {"model": self.model, "input": texts}
+        req = urllib.request.Request(
+            self.url, data=json.dumps(payload).encode("utf-8"),
+            headers=self._request_headers(self.api_key), method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                body = resp.read().decode("utf-8")
+        except Exception as exc:
+            raise CoreError(
+                f"local embedding server error: {exc}. Start LM Studio/llama.cpp/vLLM "
+                f"on loopback or unset the neural backend."
+            ) from exc
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise CoreError("local embedding server returned non-JSON") from exc
+        rows = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(rows, list) or len(rows) != len(texts):
+            raise CoreError(
+                f"local embedding server returned {len(rows) if isinstance(rows, list) else 'no'} "
+                f"vector(s) for {len(texts)} input(s); refusing to guess alignment"
+            )
+        dim = None
+        vectors = []
+        for i, row in enumerate(rows):
+            vec = (row or {}).get("embedding") if isinstance(row, dict) else None
+            if not isinstance(vec, list) or not vec:
+                raise CoreError(f"missing embedding vector for input {i}")
+            parsed = []
+            for j, value in enumerate(vec):
+                try:
+                    num = float(value)
+                except (TypeError, ValueError) as exc:
+                    raise CoreError(f"non-numeric embedding value at {i}[{j}]") from exc
+                if not math.isfinite(num):
+                    raise CoreError(f"non-finite embedding value at {i}[{j}]")
+                parsed.append(num)
+            if dim is None:
+                dim = len(parsed)
+            elif len(parsed) != dim:
+                raise CoreError("inconsistent embedding dimensions across the batch")
+            vectors.append(parsed)
+        return vectors
+
+
+def _assert_loopback(url, label):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise CoreError(f"{label} must be http(s): {url}")
+    host = parsed.hostname or ""
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return
+    except ValueError:
+        pass
+    raise CoreError(f"{label} refused (non-loopback): {host}")
+
+
 def _bm25(query_tokens, doc_token_lists, k1=1.5, b=0.75):
     n = len(doc_token_lists)
     if n == 0:
@@ -172,7 +287,12 @@ class AsOfRAG:
         dense = None
         if self.embedding:
             q_vec = self.embedding.embed(query)
-            dense = [_cosine(q_vec, self.embedding.embed(t)) for t in texts]
+            batch = getattr(self.embedding, "embed_batch", None)
+            if callable(batch):
+                doc_vecs = batch(texts)
+            else:
+                doc_vecs = [self.embedding.embed(t) for t in texts]
+            dense = [_cosine(q_vec, v) for v in doc_vecs]
         max_lex = max(lexical) or 1.0
         scored = []
         for i, r in enumerate(rows):

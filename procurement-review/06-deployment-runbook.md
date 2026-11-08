@@ -74,6 +74,45 @@ python readiness_report.py --format json           # blockers (fail closed)
 python readiness_report.py --format md --out readiness.md --db procurement.db
 ```
 
+### 3.1 Scanned documents (PDF → typed extraction)
+
+Incoming documents are PDFs. The pipeline renders pages locally with
+**Poppler `pdftoppm`**, OCRs with **tesseract** (`eng` default, `fil` optional,
+`eng+fil` for Taglish scans), then runs the standard typed extraction with
+fail-closed validation. Both binaries are operator-installed; no model weights
+are bundled and no network calls are made.
+
+```bash
+# one-time operator installs: poppler-utils (pdftoppm), tesseract-ocr,
+# tesseract-ocr-fil (optional Taglish language data)
+
+python extraction.py ocr --db procurement.db --tx-id <id> \
+  --checklist checklist.json --file scan.pdf \
+  --url http://127.0.0.1:8080/extract          # or --stub for a dry run
+```
+
+The OCR step runs through the same `extract_and_check` path, so the
+`OCR_COMPLETED` ledger event and downstream provenance are recorded exactly as
+for digital PDFs, and extraction before public bid opening remains blocked.
+Unit tests stub both binaries; **live rehearsal with real scanned samples
+remains an operator + DPO step**.
+
+### 3.2 Embedding backend comparison (advisory)
+
+```bash
+python embedding_compare.py                  # TF-IDF vs loopback LM Studio nomic
+python embedding_compare.py --json
+```
+
+Compares the deterministic TF-IDF baseline against a loopback neural backend
+(OpenAI-compatible `/v1/embeddings`; LM Studio `text-embedding-nomic-embed-text-v1.5`)
+on 14 phrased/Taglish queries against the 13 public seed passages. Reported
+live (2026-11-08): **TF-IDF P@1=0.57 / R@3=0.86 / MRR=0.738; neural P@1=0.64 /
+R@3=0.93 / MRR=0.774** — a small edge overall, with worse rankings on
+`34.3`-style queries (nomic is English-leaning). Not a benchmark; production
+still targets bge-m3/multilingual-e5 served locally. Citation verification is
+unchanged and authoritative regardless of backend.
+
 Real fine-tuning requires approved/anonymized samples + DPO/BAC sign-off —
 synthetic sets are plumbing/format validation only.
 

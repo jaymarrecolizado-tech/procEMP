@@ -17,10 +17,14 @@ model weights in this repo; StubBackend is used for tests and the demo.
 
 from __future__ import annotations
 
+import argparse
 import ipaddress
 import json
 import os
+import re
+import shutil
 import subprocess
+import tempfile
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -28,7 +32,7 @@ from datetime import date
 
 from core import (
     CoreError, PolicyBlocked, append_event, canonical, get_tx, has_event,
-    now, sha256_text, submit_verdict,
+    now, sha256_text, submit_verdict, _connect,
 )
 from checker import evaluate_submission
 
@@ -68,10 +72,87 @@ class PassthroughOCR(OCRBackend):
         return out
 
 
+# ---------------------------------------------------------------- PDF render
+
+_PAGE_RE = re.compile(r"-(\d+)\.[^.]+$")
+
+
+def _page_number(path):
+    match = _PAGE_RE.search(os.path.basename(path))
+    return int(match.group(1)) if match else 0
+
+
+def _as_command_list(value):
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
+def render_pdf_to_images(pdf_path, output_dir=None, *, dpi=300, prefix="page",
+                         fmt="png", poppler=("pdftoppm",), timeout=180):
+    """Render a local PDF to page images using Poppler's ``pdftoppm``.
+
+    No network. Requires the operator-installed Poppler binaries; a missing
+    renderer fails closed with a clear error (never a silent partial render).
+    Returns the image paths ordered by page number.
+    """
+    if not os.path.isfile(pdf_path):
+        raise ExtractionError(f"PDF not found: {pdf_path}")
+    try:
+        dpi = int(dpi)
+    except (TypeError, ValueError) as exc:
+        raise ExtractionError(f"dpi must be an integer, got {dpi!r}") from exc
+    if not 72 <= dpi <= 600:
+        raise ExtractionError("dpi must be between 72 and 600")
+    fmt = str(fmt).lower()
+    if fmt not in ("png", "jpg", "jpeg", "ppm", "pgm", "tiff"):
+        raise ExtractionError(f"unsupported image format: {fmt}")
+
+    output_dir = output_dir or tempfile.mkdtemp(prefix="procemp-pdf-")
+    os.makedirs(output_dir, exist_ok=True)
+    out_prefix = os.path.join(output_dir, prefix)
+    poppler = _as_command_list(poppler)
+    cmd = poppler + ["-r", str(dpi), "-" + fmt, pdf_path, out_prefix]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                      check=True)
+    except FileNotFoundError as exc:
+        raise ExtractionError(
+            f"local renderer {poppler[0]!r} is not installed. Install Poppler "
+            "(pdftoppm) on the workstation; see procurement-review/06-deployment-runbook.md"
+        ) from exc
+    except subprocess.SubprocessError as exc:
+        error = getattr(exc, "stderr", None) or str(exc)
+        raise ExtractionError(f"PDF render failed: {error}") from exc
+    images = [
+        os.path.join(output_dir, name)
+        for name in os.listdir(output_dir)
+        if name.startswith(prefix + "-") and name.lower().endswith("." + fmt)
+    ]
+    images.sort(key=_page_number)
+    if not images:
+        raise ExtractionError("renderer produced no page images for the PDF")
+    return images
+
+
+_LANG_RE = re.compile(r"^[a-z]{2,3}(\+[a-z]{2,3})*$", re.IGNORECASE)
+
+
 class TesseractOCR(OCRBackend):
-    """Optional local OCR. Requires a local `tesseract` binary; no network."""
-    def __init__(self, language="eng"):
+    """Optional local OCR. Requires a local `tesseract` binary; no network.
+
+    ``language`` follows tesseract's ``-l`` spec (``eng`` default, ``fil``
+    optional, ``eng+fil`` for mixed Taglish scans). Anything else is rejected.
+    """
+
+    def __init__(self, language="eng", tesseract=("tesseract",)):
+        if not _LANG_RE.match(str(language or "")):
+            raise ExtractionError(
+                f"invalid tesseract language spec: {language!r} "
+                "(examples: 'eng', 'fil', 'eng+fil')"
+            )
         self.language = language
+        self.tesseract = _as_command_list(tesseract)
 
     def pages(self, pages):
         out = []
@@ -81,13 +162,17 @@ class TesseractOCR(OCRBackend):
                 raise ExtractionError(f"image not found for page {i}: {path}")
             try:
                 result = subprocess.run(
-                    ["tesseract", path, "stdout", "-l", self.language],
+                    self.tesseract + [path, "stdout", "-l", self.language],
                     capture_output=True, text=True, timeout=60, check=True,
                 )
             except FileNotFoundError as exc:
-                raise ExtractionError("local tesseract binary not installed") from exc
+                raise ExtractionError(
+                    f"local {self.tesseract[0]!r} binary not installed; see "
+                    "procurement-review/06-deployment-runbook.md"
+                ) from exc
             except subprocess.SubprocessError as exc:
-                raise ExtractionError(f"OCR failed on page {i}: {exc}") from exc
+                error = getattr(exc, "stderr", None) or str(exc)
+                raise ExtractionError(f"OCR failed on page {i}: {error}") from exc
             out.append({"page": i, "text": result.stdout, "ocr": "tesseract"})
         return out
 
@@ -340,6 +425,34 @@ def extract_and_check(conn, tx_id, checklist, pages, backend, schema=None,
     return verdict, result
 
 
+def extract_pdf(conn, tx_id, checklist, pdf_path, backend, *,
+                language="eng", dpi=300, poppler=("pdftoppm",),
+                tesseract=("tesseract",), schema=None, threshold=None,
+                actor_id="extraction-adapter", rag=None,
+                workdir=None, keep_workdir=False):
+    """Render a local PDF -> OCR -> typed extraction with fail-closed validation.
+
+    The OCR step runs through ``extract_and_check`` so the ``OCR_COMPLETED``
+    ledger event (and downstream provenance) is recorded exactly as for the
+    digital-PDF path. Bid-content gate applies (extraction before public opening
+    is blocked). Operator dependencies: Poppler (``pdftoppm``) and tesseract.
+    """
+    owned = workdir is None
+    workdir = workdir or tempfile.mkdtemp(prefix="procemp-ocr-")
+    os.makedirs(workdir, exist_ok=True)
+    try:
+        images = render_pdf_to_images(pdf_path, workdir, dpi=dpi,
+                                      poppler=poppler)
+        pages = [{"image_path": path} for path in images]
+        ocr = TesseractOCR(language=language, tesseract=tesseract)
+        return extract_and_check(conn, tx_id, checklist, pages, backend,
+                                 schema=schema, ocr=ocr, threshold=threshold,
+                                 actor_id=actor_id, rag=rag)
+    finally:
+        if owned and not keep_workdir:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
 def valid_stub_response(model_version="qwen2.5-3b-ft-procurement-v1"):
     """A clean model response, used by tests and the demo."""
     return {
@@ -372,3 +485,92 @@ def valid_stub_response(model_version="qwen2.5-3b-ft-procurement-v1"):
             },
         },
     }
+
+
+def _load_checklist(path):
+    if not path:
+        raise ExtractionError("--checklist is required (named BAC officer approval required)")
+    if not os.path.isfile(path):
+        raise ExtractionError(f"checklist file not found: {path}")
+    with open(path, "r", encoding="utf-8") as fh:
+        try:
+            data = json.load(fh)
+        except json.JSONDecodeError as exc:
+            raise ExtractionError(f"checklist is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict) or not data.get("approved_by"):
+        raise ExtractionError("checklist must carry approved_by (a named BAC Secretariat officer)")
+    return data
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="ProcEMP step 6: render PDF -> OCR -> typed extraction (fail closed)."
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("ocr", help="render a scanned PDF, OCR it, then typed extraction")
+    p.add_argument("--db", required=True)
+    p.add_argument("--tx-id", required=True)
+    p.add_argument("--checklist", required=True,
+                   help="BAC-approved checklist JSON (must carry approved_by)")
+    p.add_argument("--file", required=True, help="local PDF path (never a URL)")
+    p.add_argument("--language", default="eng", help="e.g. eng, fil, or eng+fil")
+    p.add_argument("--dpi", type=int, default=300)
+    p.add_argument("--url", help="local loopback model endpoint (e.g. http://127.0.0.1:8080/extract)")
+    p.add_argument("--model-version", default="qwen2.5-3b-ft-procurement-v1")
+    p.add_argument("--timeout", type=int, default=120)
+    p.add_argument("--stub", action="store_true",
+                   help="dry run with a built-in stub response; NO model is called")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "ocr":
+        try:
+            checklist = _load_checklist(args.checklist)
+            if args.stub:
+                backend = StubBackend(valid_stub_response(args.model_version))
+                dry_run = True
+            elif args.url:
+                backend = LocalHTTPBackend(args.url, model_version=args.model_version,
+                                           timeout=args.timeout)
+                dry_run = False
+            else:
+                raise ExtractionError(
+                    "an inference backend is required: --url (loopback) or --stub (dry run)"
+                )
+            conn = _connect(args.db)
+            try:
+                verdict, result = extract_pdf(
+                    conn, args.tx_id, checklist, args.file, backend,
+                    language=args.language, dpi=args.dpi,
+                )
+            finally:
+                conn.close()
+        except CoreError as exc:
+            print(json.dumps({"error": str(exc), "advisory_only": True}))
+            return 1
+        out = {
+            "advisory_only": True,
+            "dry_run": dry_run,
+            "note": ("no model was called" if args.stub else
+                     "typed extraction via local loopback model; still advisory — "
+                     "human bodies make statutory decisions"),
+            "verdict": verdict,
+            "validation": {
+                "valid": result.valid,
+                "violations": result.violations,
+                "uncertain_fields": result.uncertain_fields,
+                "model_version": result.model_version,
+                "prompt_hash": result.prompt_hash,
+            },
+            "operator_dependencies": [
+                "poppler (pdftoppm) for PDF rendering",
+                "tesseract with eng (and optional fil) language data",
+            ],
+        }
+        print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
+        return 0
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

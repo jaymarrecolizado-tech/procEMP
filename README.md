@@ -4,7 +4,7 @@ A working prototype of an AI-assisted government procurement system, built again
 **RA 12009 (New Government Procurement Act)** and its IRR, with dual-regime support
 for legacy **RA 9184 / 2016 IRR** transactions during the transitory period.
 
-> **Status:** all 10 build-order steps implemented · **208 tests passing** · stdlib-only ·
+> **Status:** all 10 build-order steps implemented · **223 tests passing** · stdlib-only ·
 > **prototype, not a deployable government system**. No model weights, embedding models,
 > official form bodies or production database are bundled. See [Before production](#before-production).
 
@@ -21,7 +21,7 @@ Requires Python 3.10+. No third-party packages.
 ```bash
 cd procurement-core
 
-# Run the full acceptance suite (208 tests)
+# Run the full acceptance suite (223 tests)
 python -m unittest discover -s tests -v
 
 # Run the end-to-end scenario (14 steps, prints each control firing)
@@ -82,8 +82,11 @@ procurement-core/              Runnable prototype (Python stdlib only)
   core.py                      Rules registry, regime resolver, append-only hash-chained
                                ledger, numbering, state machine, human gates, migration
   checker.py                   Deterministic pass/fail rules engine (no LLM in decisions)
-  extraction.py                OCR/extraction adapter — the Qwen2.5-3B plug-in point
-  rag.py                       As-of retrieval + citation verification
+  extraction.py                OCR/extraction adapter — the Qwen2.5-3B plug-in point;
+                               `extraction.py ocr`: PDF -> Poppler/tesseract -> typed extraction
+  rag.py                       As-of retrieval + citation verification (BM25 default;
+                               pluggable neural HTTPEmbedding, opt-in)
+  embedding_compare.py         Advisory TF-IDF vs loopback neural embedding comparison
   forms.py                     GPPB Res. 03-2025 form registry + deterministic drafting
   svp_documents.py             SVP chain drafting: PR -> RFQ -> Minutes -> Abstract ->
                                Resolution -> PO (fail-closed cross-doc validation)
@@ -113,7 +116,7 @@ procurement-core/              Runnable prototype (Python stdlib only)
   seed_forms.json              36 GPPB forms, Standard vs Recommended
   seed_corpus.json             13 verified official legal passages (verbatim excerpts)
   seed_extraction_schema.json  Typed extraction output contract
-  tests/                       208 tests (core + queue + tracks + hardening + migration + svp_docs)
+  tests/                       223 tests (core + queue + tracks + hardening + migration + svp_docs + ocr)
 ```
 
 ---
@@ -127,8 +130,8 @@ procurement-core/              Runnable prototype (Python stdlib only)
 | 3 | `core.py` gates | Bid contents cannot be read before the recorded public opening; stage transitions need verifiable human sign-offs |
 | 4 | `checker.py` | Deterministic pass/fail; an unreadable scan abstains rather than disqualifying a bidder |
 | 5 | `forms.py` + `seed_forms.json` | Field-fill drafting only, no generated legal prose; release blocked until official form bodies are hash-registered |
-| 6 | `extraction.py` | Strict typed schema, loopback-only inference, abstain on low confidence or hallucinated fields |
-| 7 | `rag.py` + `seed_corpus.json` | As-of retrieval pinned to the transaction; a citation to a nonexistent section cannot be fuzzy-matched |
+| 6 | `extraction.py` | Strict typed schema, loopback-only inference, abstain on low confidence or hallucinated fields; scanned PDFs via operator-installed Poppler/tesseract (`extraction.py ocr`) |
+| 7 | `rag.py` + `seed_corpus.json` | As-of retrieval pinned to the transaction; a citation to a nonexistent section cannot be fuzzy-matched; opt-in loopback neural embedding (`HTTPEmbedding`) — citation verification is backend-independent |
 | 8 | `audit.py` + `coa_server.py` | Immutable sealed folders, hash-chain attestation, read-only COA verification |
 | 9 | `monitoring.py` | Human-verified milestones; liquidated damages are advisory estimates, never determinations |
 | 10 | `learning.py` | Second-reviewer adjudication, frozen benchmark, per-slice non-regression, human approval, canary, rollback |

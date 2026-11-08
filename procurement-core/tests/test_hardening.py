@@ -7,6 +7,7 @@
 - review_server.py richer viewers (documents/citations/ledger + role hints)
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -465,6 +466,131 @@ class PostLimitTests(unittest.TestCase):
             client.close()
             server.shutdown()
             server.server_close()
+            conn.close()
+
+
+class _EmbeddingStubHandler(BaseHTTPRequestHandler):
+    calls = 0
+
+    def do_POST(self):
+        type(self).calls += 1
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+            inputs = body.get("input")
+            items = [inputs] if isinstance(inputs, str) else list(inputs or [])
+            data = []
+            for i, text in enumerate(items):
+                vec = [((int(hashlib.sha256(f"{text}:{j}".encode()).hexdigest(), 16) % 2000) - 1000) / 1000.0
+                       for j in range(8)]
+                data.append({"index": i, "embedding": vec})
+            raw = json.dumps({"model": body.get("model"), "data": data}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+        except Exception:
+            self.send_response(500)
+            self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+class _BadEmbeddingShapeHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        raw = json.dumps({"data": []}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        pass
+
+
+def _start_embedding_stub(handler_cls):
+    handler_cls.calls = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{port}/v1/embeddings"
+    return server, url
+
+
+class HTTPEmbeddingTests(unittest.TestCase):
+    def test_embed_shape_determinism_and_batch(self):
+        from rag import HTTPEmbedding
+        server, url = _start_embedding_stub(_EmbeddingStubHandler)
+        try:
+            backend = HTTPEmbedding(url=url, model="test-embed")
+            vec = backend.embed("confidentiality of submitted bids")
+            self.assertEqual(len(vec), 8)
+            self.assertTrue(all(isinstance(v, float) for v in vec))
+            again = HTTPEmbedding(url=url, model="test-embed")
+            self.assertEqual(again.embed("confidentiality of submitted bids"), vec)
+            vecs = backend.embed_batch(["a", "b", "c"])
+            self.assertEqual(len(vecs), 3)
+            self.assertTrue(all(len(v) == 8 for v in vecs))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_embed_caches_vectors(self):
+        from rag import HTTPEmbedding
+        server, url = _start_embedding_stub(_EmbeddingStubHandler)
+        try:
+            backend = HTTPEmbedding(url=url, model="test-embed")
+            backend.embed("cache me")
+            backend.embed("cache me")
+            self.assertEqual(type(backend).__name__, "HTTPEmbedding")
+            self.assertEqual(_EmbeddingStubHandler.calls, 1)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_non_loopback_endpoint_is_refused(self):
+        from rag import HTTPEmbedding
+        with self.assertRaises(CoreError):
+            HTTPEmbedding(url="http://192.168.1.20:1234/v1/embeddings")
+        with self.assertRaises(CoreError):
+            HTTPEmbedding(url="ftp://127.0.0.1:1234/embeddings")
+
+    def test_server_error_raises_core_error(self):
+        from rag import HTTPEmbedding
+        backend = HTTPEmbedding(url="http://127.0.0.1:1/v1/embeddings", timeout=1)
+        with self.assertRaises(CoreError):
+            backend.embed("x")
+
+    def test_unexpected_vector_count_is_rejected(self):
+        from rag import HTTPEmbedding
+        server, url = _start_embedding_stub(_BadEmbeddingShapeHandler)
+        try:
+            backend = HTTPEmbedding(url=url, model="test-embed")
+            with self.assertRaises(CoreError):
+                backend.embed("x")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_retrieve_wires_http_embedding(self):
+        from rag import AsOfRAG, HTTPEmbedding
+        conn = init_db(":memory:")
+        try:
+            tx = new_tx(conn)
+            server, url = _start_embedding_stub(_EmbeddingStubHandler)
+            try:
+                rag = AsOfRAG(conn, HTTPEmbedding(url=url, model="test-embed"))
+                hits = rag.retrieve("IRR RA 12009 Sec. 59.1 checklist of required documents", tx, top_k=2)
+                self.assertTrue(hits)
+                self.assertIn("chunk_id", hits[0])
+            finally:
+                server.shutdown()
+                server.server_close()
+        finally:
             conn.close()
 
 
